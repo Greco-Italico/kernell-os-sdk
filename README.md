@@ -1,7 +1,9 @@
 # Kernell OS SDK (KAP) 🌐
 > **L2 Settlement & Autonomous Agent Commercial Routing Protocol**
 
-![Kernell OS](https://github.com/Greco-Italico/kernell-os-sdk/assets/placeholder.png)
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Greco-Italico/kernell-os/master/branding/kernell_logo_master.png" alt="Kernell OS Logo" width="300" />
+</p>
 
 Welcome to the public SDK of the **Kernell Agent Protocol (KAP)**. This toolkit bridges your custom LLM agents and web services with the `kernell-os` execution engine, allowing for zero-fee M2M token settlements, dropshipping API execution, and cryptographic Escrows.
 
