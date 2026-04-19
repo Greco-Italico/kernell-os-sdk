@@ -1,6 +1,6 @@
 """Kernell OS SDK — Open-Source Agent Framework v0.5.0"""
 
-__version__ = "0.5.1"
+__version__ = "1.0.0"
 __author__ = "Kernell OS"
 
 from kernell_os_sdk.agent import Agent

@@ -75,7 +75,7 @@ class AgentGUI:
 
         self._setup_routes()
 
-    def _verify_token(self, request: Request) -> bool:
+    def _verify_token(self, request: "Any") -> bool:
         """Verify the bearer token from the Authorization header."""
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
