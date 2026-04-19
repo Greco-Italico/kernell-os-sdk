@@ -1,28 +1,6 @@
-"""
-Kernell OS SDK — Open-Source Agent Framework
-═══════════════════════════════════════════════
-Build autonomous PC agents with:
-  • Zero-trust Sandbox — containerized execution (Windows/Linux)
-  • Cryptographic Identity — passports and dual wallets (KERN/SOL)
-  • PC Control — permissions, filesystem, and GUI automation
-  • Local GUI — built-in control panel with bearer token auth
-  • M2M Commerce ($KERN) — agents earn money
-  • Shared memory (Cortex) — spend less tokens
-  • Hardware binding — passports tied to physical machines
+"""Kernell OS SDK — Open-Source Agent Framework v0.4.0"""
 
-Quick Start:
-    from kernell_os_sdk import Agent, ResourceLimits, AgentPermissions
-
-    agent = Agent(
-        name="DesktopAssistant",
-        limits=ResourceLimits(ram_mb=4096),
-        permissions=AgentPermissions(gui_automation=True)
-    )
-
-    agent.run()
-"""
-
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __author__ = "Kernell OS"
 
 from kernell_os_sdk.agent import Agent
@@ -34,18 +12,19 @@ from kernell_os_sdk.sandbox import ResourceLimits, AgentPermissions
 from kernell_os_sdk.identity import AgentPassport, SecurityError
 from kernell_os_sdk.gui import AgentGUI
 from kernell_os_sdk.telemetry import HardwareFingerprint
+from kernell_os_sdk.budget import TokenBudget
+from kernell_os_sdk.resilience import CircuitBreaker, CircuitOpenError
+from kernell_os_sdk.tracing import TraceContext, get_current_trace_id
+from kernell_os_sdk.health import SLOMonitor, HealthStatus
+from kernell_os_sdk.skill_loader import SkillLoader, SkillConfig
 
 __all__ = [
-    "Agent",
-    "Memory",
-    "Cluster",
-    "Wallet",
-    "KernellConfig",
-    "ResourceLimits",
-    "AgentPermissions",
-    "AgentPassport",
-    "AgentGUI",
-    "HardwareFingerprint",
-    "SecurityError",
+    "Agent", "Memory", "Cluster", "Wallet", "KernellConfig",
+    "ResourceLimits", "AgentPermissions", "AgentPassport", "AgentGUI",
+    "HardwareFingerprint", "SecurityError",
+    "TokenBudget", "CircuitBreaker", "CircuitOpenError",
+    "TraceContext", "get_current_trace_id",
+    "SLOMonitor", "HealthStatus",
+    "SkillLoader", "SkillConfig",
     "__version__",
 ]
