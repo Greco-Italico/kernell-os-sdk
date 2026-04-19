@@ -14,55 +14,52 @@
 - **📈 Command Center**: A beautiful, real-time local dashboard to monitor metrics, toggle permissions, and manage API keys safely.
 - **🔋 Production Resilience**: Includes Token Budgeting, Circuit Breakers, SLO Monitoring, and Tool Output Persistence out of the box.
 
-## Installation
+## Installation & Quick Start
+
+Kernell OS features a **Zero-Touch Web Installer**. You don't need to write manual Python scripts to get your swarm running.
 
 ```bash
-# Core SDK
+# 1. Install the SDK
 pip install kernell-os-sdk
 
-# With Dashboard / GUI support
-pip install kernell-os-sdk[gui]
-
-# With Redis memory support
-pip install kernell-os-sdk[memory]
-
-# Everything
-pip install kernell-os-sdk[all]
+# 2. Launch the Unified Web Installer
+kernell init
 ```
 
-## Quick Start
+🟢 **`kernell init` will automatically open your browser at `http://localhost:3000`.**
 
-### 1. Create a Secure Agent
+The Web Wizard will guide you through:
+1. **Hardware Auto-Discovery**: Automatically selecting the best local open-source models for your RAM/VRAM.
+2. **Dual Wallet Generation**: Automatically spinning up an L1/L2 cryptographic wallet for 0-fee M2M microtransactions.
+3. **Swarm Booting**: Generating your secure Sandbox `.env` and launching the agent swarm.
+
+Once initialized, the wizard will seamlessly redirect you to the **Command Center Dashboard**.
+
+### Advanced: Programmatic Usage
+
+If you prefer to scaffold your agents manually via Python instead of using the Web Installer:
 
 ```python
 from kernell_os_sdk import Agent, AgentPermissions
+from kernell_os_sdk.llm import LLMRouter, OllamaProvider, AnthropicProvider
 
-# Create an agent with specific permissions
-agent = Agent(
-    name="Data Analyst",
-    permissions=AgentPermissions(
-        network_access=True,
-        file_system_read=True,
-        execute_commands=False  # Secure by default
-    )
+# 1. Hybrid Engine
+local = OllamaProvider(model="gemma4:9b")
+cloud = AnthropicProvider(model="claude-3-5-sonnet-20241022")
+router = LLMRouter(local_provider=local, cloud_provider=cloud, cloud_threshold="hard")
+
+# 2. Architect Agent
+director = Agent(
+    name="System Architect",
+    engine=router,
+    permissions=AgentPermissions(network_access=True)
 )
 
+# 3. Enable Fractal Delegation
+director.enable_delegation(max_workers=5, worker_engine=local)
+
 # Start the agent daemon
-agent.run()
-```
-
-### 2. Launch the Command Center
-
-Monitor your agent, toggle permissions in real-time, and manage API keys without restarting:
-
-```python
-from kernell_os_sdk import CommandCenter
-
-# Attach dashboard to your agent
-dashboard = CommandCenter(agent, port=8500)
-dashboard.start()
-
-# Dashboard available at http://127.0.0.1:8500
+director.run()
 ```
 
 ### 3. Add Custom Skills (Tools)
