@@ -24,8 +24,11 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from decimal import Decimal, getcontext
 import structlog
 from pydantic import BaseModel, Field, field_validator
+
+getcontext().prec = 28
 
 from kap_escrow.wal import TransactionWAL
 from kap_escrow.signing import sign_tx
@@ -33,8 +36,8 @@ from kap_escrow.signing import sign_tx
 logger = structlog.get_logger("KAP_ESCROW")
 
 class EscrowMeta(BaseModel):
-    buyer: str = Field(..., min_length=1)
-    locked: float = Field(..., gt=0)
+    buyer: str = Field(..., pattern=r"^[a-zA-Z0-9_\-]{3,64}$")
+    locked: Decimal = Field(..., gt=Decimal("0"))
     ts: float = Field(default_factory=time.time)
 
 NONCE_TTL_S = 172800  # 48h anti-replay window
