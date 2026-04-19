@@ -1,19 +1,19 @@
 """
-KAP Taint Engine — Fractional Taint Tracking (Anti-Laundering)
-================================================================
-Prevents "Taint Laundering" where adversaries fragment tainted funds
-across multiple escrows and recombine them through mixer agents.
+KAP Taint Engine — Mass Conservation Taint Tracking (Anti-Sybil/Laundering)
+=============================================================================
+Prevents "Iterative Dilution" and Sybil laundering attacks.
 
-Model: UTXO-style fractional taint propagation through the transaction graph.
-Every asset carries a taint_ratio ∈ [0.0, 1.0]:
-  - 0.0 = completely clean
-  - 1.0 = fully tainted (e.g., stolen funds, sanctioned origin)
+Model: Conservation of Tainted Mass
+Every asset tracks EXACTLY how much of it is clean and how much is tainted:
+  - clean_amount: Decimal
+  - tainted_amount: Decimal
 
-When assets merge (deposits to same agent), taint is weighted by amount.
-When assets split (withdrawals), taint propagates proportionally.
+When assets merge, mass is simply added:
+  total_clean = a.clean + b.clean
+  total_tainted = a.tainted + b.tainted
 
-Taint NEVER decreases through transaction volume alone — only through
-explicit governance action (e.g., compliance review, staking bond).
+When splitting, amounts are divided proportionally to the ratio.
+CRITICAL: Tainted mass is NEVER destroyed or diluted out of existence.
 """
 from __future__ import annotations
 
@@ -28,26 +28,36 @@ getcontext().prec = 28
 logger = logging.getLogger("KAP_TAINT")
 
 # Policy thresholds
-TAINT_BLOCK_THRESHOLD = Decimal("0.20")   # Block transactions above 20% taint
-TAINT_WARN_THRESHOLD = Decimal("0.05")    # Warn above 5% taint
-MAX_ALLOWED_FEE = Decimal("0.15")         # 15% max fee (anti-economic-drain)
+TAINT_RATIO_BLOCK_THRESHOLD = Decimal("0.20")   # Block if ratio > 20%
+MAX_PATH_FEE = Decimal("0.15")                  # Anti-Sybil Fee chaining limit
+MIN_TRANSFER_SIZE = Decimal("0.0001")           # Anti-Dust attack precision exploit
 
 
 class TaintedAsset:
-    """Represents an asset with fractional taint metadata."""
-    __slots__ = ("amount", "taint_ratio", "origin_tx", "ts")
+    """Represents an asset with conserved taint mass."""
+    __slots__ = ("clean_amount", "tainted_amount", "origin_tx", "ts")
 
-    def __init__(self, amount: Decimal, taint_ratio: Decimal = Decimal("0"),
+    def __init__(self, clean_amount: Decimal, tainted_amount: Decimal = Decimal("0"),
                  origin_tx: str = "", ts: float = None):
-        self.amount = amount
-        self.taint_ratio = max(Decimal("0"), min(Decimal("1"), taint_ratio))
+        self.clean_amount = clean_amount
+        self.tainted_amount = tainted_amount
         self.origin_tx = origin_tx
         self.ts = ts or time.time()
 
+    @property
+    def total_amount(self) -> Decimal:
+        return self.clean_amount + self.tainted_amount
+
+    @property
+    def taint_ratio(self) -> Decimal:
+        if self.total_amount == 0:
+            return Decimal("0")
+        return self.tainted_amount / self.total_amount
+
     def to_dict(self) -> dict:
         return {
-            "amount": str(self.amount),
-            "taint_ratio": str(self.taint_ratio),
+            "clean_amount": str(self.clean_amount),
+            "tainted_amount": str(self.tainted_amount),
             "origin_tx": self.origin_tx,
             "ts": self.ts,
         }
@@ -55,8 +65,8 @@ class TaintedAsset:
     @classmethod
     def from_dict(cls, d: dict) -> "TaintedAsset":
         return cls(
-            amount=Decimal(d["amount"]),
-            taint_ratio=Decimal(d["taint_ratio"]),
+            clean_amount=Decimal(d["clean_amount"]),
+            tainted_amount=Decimal(d["tainted_amount"]),
             origin_tx=d.get("origin_tx", ""),
             ts=d.get("ts", time.time()),
         )
@@ -64,40 +74,37 @@ class TaintedAsset:
 
 def merge_assets(assets: List[TaintedAsset]) -> TaintedAsset:
     """
-    Merge multiple assets into one (e.g., agent receives multiple deposits).
-    Taint is WEIGHTED by amount — prevents dilution attacks.
-
-    Example:
-      - Asset A: 100 KERN, 80% tainted
-      - Asset B: 900 KERN, 0% tainted
-      - Result:  1000 KERN, 8% tainted (not 0%!)
-
-    An attacker cannot "wash" 100 tainted KERN by mixing with 900 clean KERN
-    and then withdrawing — the 8% taint follows ALL outputs.
+    Merge multiple assets into one. Mass is conserved.
+    Attacker cannot 'dilute' 100 tainted by adding 900 clean — 
+    the 100 tainted mass remains perfectly intact.
     """
-    total = sum(a.amount for a in assets)
-    if total == 0:
+    clean = sum(a.clean_amount for a in assets)
+    tainted = sum(a.tainted_amount for a in assets)
+    return TaintedAsset(clean_amount=clean, tainted_amount=tainted)
+
+
+def split_asset(source: TaintedAsset, amount_to_extract: Decimal) -> TaintedAsset:
+    """
+    Extract a sub-amount from an asset. The extracted amount draws proportionally
+    from the clean and tainted mass.
+    """
+    if amount_to_extract > source.total_amount:
+        raise ValueError("Cannot extract more than total amount")
+    
+    if source.total_amount == 0:
         return TaintedAsset(Decimal("0"), Decimal("0"))
 
-    weighted_taint = sum(a.amount * a.taint_ratio for a in assets) / total
-    return TaintedAsset(amount=total, taint_ratio=weighted_taint)
+    ratio = source.taint_ratio
+    extracted_tainted = amount_to_extract * ratio
+    extracted_clean = amount_to_extract - extracted_tainted
 
-
-def split_asset(source: TaintedAsset, amounts: List[Decimal]) -> List[TaintedAsset]:
-    """
-    Split an asset into multiple outputs. Taint propagates to ALL outputs equally.
-    This prevents the "fragment and recombine" attack.
-    """
-    return [
-        TaintedAsset(amount=amt, taint_ratio=source.taint_ratio)
-        for amt in amounts
-    ]
+    return TaintedAsset(clean_amount=extracted_clean, tainted_amount=extracted_tainted)
 
 
 class TaintLedger:
     """
     Per-agent taint ledger backed by Redis.
-    Tracks the aggregate taint ratio of each agent's wallet.
+    Tracks conserved taint mass.
     """
 
     def __init__(self, redis_client, prefix: str = "kap:taint"):
@@ -120,45 +127,39 @@ class TaintLedger:
         self, sender: str, receiver: str, amount: Decimal, tx_id: str = ""
     ) -> Dict[str, str]:
         """
-        Transfer funds with taint propagation.
-        Returns status dict with warnings/blocks.
+        Transfer funds with Mass Conservation.
         """
+        # Anti-Dust Attack (Precision exploit rounding mitigation)
+        if amount < MIN_TRANSFER_SIZE:
+            return {"status": "rejected", "reason": f"amount below min transfer size {MIN_TRANSFER_SIZE}"}
+
         sender_asset = self.get_taint(sender)
         receiver_asset = self.get_taint(receiver)
 
-        if amount > sender_asset.amount:
+        if amount > sender_asset.total_amount:
             return {"status": "rejected", "reason": "insufficient_balance"}
 
-        # The transferred chunk inherits sender's taint ratio
-        transferred = TaintedAsset(
-            amount=amount,
-            taint_ratio=sender_asset.taint_ratio,
-            origin_tx=tx_id,
-        )
+        # Extract proportional mass
+        transferred = split_asset(sender_asset, amount)
 
-        # Check taint policy BEFORE executing
-        if transferred.taint_ratio >= TAINT_BLOCK_THRESHOLD:
+        # Anti-Sybil Path Enforcement (block if transferred chunk itself exceeds threshold)
+        if transferred.taint_ratio >= TAINT_RATIO_BLOCK_THRESHOLD:
             logger.critical(
-                "taint_transfer_blocked",
-                sender=sender, receiver=receiver,
-                taint=str(transferred.taint_ratio),
-                threshold=str(TAINT_BLOCK_THRESHOLD),
+                f"taint_transfer_blocked sender={sender} receiver={receiver} "
+                f"taint_ratio={transferred.taint_ratio} tainted_mass={transferred.tainted_amount}"
             )
             return {
                 "status": "blocked",
-                "reason": f"taint_ratio {transferred.taint_ratio} exceeds threshold {TAINT_BLOCK_THRESHOLD}",
+                "reason": "taint threshold exceeded",
             }
 
-        if transferred.taint_ratio >= TAINT_WARN_THRESHOLD:
-            logger.warning("taint_transfer_warning", taint=str(transferred.taint_ratio))
-
-        # Update sender: subtract amount, taint ratio unchanged
+        # Update sender: subtract exact mass extracted
         new_sender = TaintedAsset(
-            amount=sender_asset.amount - amount,
-            taint_ratio=sender_asset.taint_ratio,
+            clean_amount=sender_asset.clean_amount - transferred.clean_amount,
+            tainted_amount=sender_asset.tainted_amount - transferred.tainted_amount
         )
 
-        # Update receiver: merge incoming with existing (weighted taint)
+        # Update receiver: merge incoming with existing (conserves all mass)
         new_receiver = merge_assets([receiver_asset, transferred])
 
         self.set_taint(sender, new_sender)
@@ -166,20 +167,36 @@ class TaintLedger:
 
         return {
             "status": "ok",
-            "receiver_taint": str(new_receiver.taint_ratio),
+            "receiver_taint_ratio": str(new_receiver.taint_ratio),
         }
 
-    def check_fee_policy(self, fee: Decimal, service_agent: str) -> bool:
+    def check_path_fee(self, accumulated_fee: Decimal) -> bool:
         """
-        Anti-Economic-Drain: reject fees above MAX_ALLOWED_FEE.
-        Prevents agents from slowly extracting value via inflated fees.
+        Anti-Sybil Fee Extraction: reject paths where accumulated fee > MAX_PATH_FEE.
         """
-        if fee > MAX_ALLOWED_FEE:
+        if accumulated_fee > MAX_PATH_FEE:
+            logger.critical("sybil_fee_chain_blocked", accumulated=str(accumulated_fee))
+            return False
+        return True
+
+    def verify_no_clean_gain(self, agent_id: str, before: TaintedAsset, after: TaintedAsset) -> bool:
+        """
+        Anti-Taint-Swap Invariant (Attack: Taint Immobilization -> Clean Proxy Extraction).
+        Nadie puede aumentar su clean_amount neto si aporta tainted.
+        Si la masa tainted de un agente DISMINUYE (es decir, la movió a un escrow o la usó),
+        su masa limpia NO PUEDE AUMENTAR en la misma transacción lógica.
+        
+        Returns False si la regla es violada.
+        """
+        tainted_delta = after.tainted_amount - before.tainted_amount
+        clean_delta = after.clean_amount - before.clean_amount
+        
+        # Si el agente se deshizo de tainted (delta < 0), y de alguna forma
+        # terminó con MAS dinero limpio (delta > 0), es un Taint Swap exploit.
+        if tainted_delta < 0 and clean_delta > 0:
             logger.critical(
-                "economic_drain_blocked",
-                agent=service_agent,
-                fee=str(fee),
-                max=str(MAX_ALLOWED_FEE),
+                f"taint_swap_exploit_blocked agent={agent_id} "
+                f"clean_gain={clean_delta} tainted_loss={tainted_delta}"
             )
             return False
         return True
