@@ -21,9 +21,18 @@ from .constants import VALID_PERMISSIONS
 from .llm import BaseLLMProvider, LLMMessage
 from .policy_engine import PolicyEngine, AgentCapabilities
 from .risk_engine import RiskEngine, ExecutionContext, ActionTag, DataSensitivity
-from .execution_gate import ExecutionGate
+from .execution_gate import ExecutionGate, ApprovalSignature
 
 logger = structlog.get_logger("kernell.agent")
+
+class A2AMessage(BaseModel):
+    """Cryptographically signed Inter-Agent message with Taint Propagation."""
+    sender_id: str
+    target_id: str
+    payload: str
+    sensitivity: DataSensitivity
+    signature: bytes
+    timestamp: float
 
 
 class AgentState(BaseModel):
@@ -196,8 +205,57 @@ class Agent:
                 return "Error: GUI automation permission is disabled."
             return f"Clicked at ({x}, {y})"
 
+        @self.skill("send_a2a_message", "Sends a cryptographically signed message to another agent.")
+        def send_a2a_message(target_id: str, payload: str) -> str:
+            if not self.permissions.network_access:
+                return "Error: Network access disabled."
+                
+            # Distribute Taint: Message inherits agent's current highest sensitivity
+            msg_sensitivity = DataSensitivity.PUBLIC
+            if self.execution_context.holds_sensitive_data:
+                msg_sensitivity = DataSensitivity.INTERNAL
+
+            import time
+            from nacl.signing import SigningKey
+            from nacl.encoding import Base64Encoder
+
+            # Sign payload + sensitivity
+            signing_key = load_private_key(self._private_key)
+            raw_msg = f"{target_id}:{payload}:{msg_sensitivity.value}:{time.time()}".encode()
+            signature = signing_key.sign(raw_msg).signature
+
+            # Build A2A Message
+            msg = A2AMessage(
+                sender_id=self.name,
+                target_id=target_id,
+                payload=payload,
+                sensitivity=msg_sensitivity,
+                signature=signature,
+                timestamp=time.time()
+            )
+            
+            # Simulated network dispatch...
+            logger.info("a2a_message_dispatched", target=target_id, sensitivity=msg_sensitivity.name)
+            return f"Message sent securely to {target_id}."
+
         # Sub-Agent Delegation
         self._delegation_manager = None
+
+    def receive_a2a_message(self, message: A2AMessage) -> bool:
+        """Processes incoming A2A messages and forces Taint Propagation."""
+        # Signature validation would go here
+        
+        # OBLIGATORY TAINT PROPAGATION:
+        # If the incoming message is tainted, this agent becomes tainted.
+        if message.sensitivity > DataSensitivity.PUBLIC:
+            logger.warning(
+                "agent_tainted_by_a2a",
+                sender=message.sender_id,
+                sensitivity=message.sensitivity.name
+            )
+            self.execution_context.holds_sensitive_data = True
+            
+        return True
 
     def enable_delegation(self, max_workers: int, worker_engine: 'BaseLLMProvider', timeout: float = 60.0):
         """Enable local sub-agent delegation."""

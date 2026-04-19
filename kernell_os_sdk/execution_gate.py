@@ -15,6 +15,7 @@ logger = structlog.get_logger("kernell.execution_gate")
 
 class ApprovalSignature(BaseModel):
     signer_id: str
+    signer_role: str = "agent"  # 'agent', 'human', 'oracle'
     signature: bytes
     timestamp: float
 
@@ -28,6 +29,7 @@ class ExecutionGate:
     def __init__(self, required_signatures: int = 2, timelock_seconds: int = 30):
         self.required_signatures = required_signatures
         self.timelock_seconds = timelock_seconds
+        self.required_roles = {"agent", "oracle"}  # Trust Diversity Requirement
 
     def approve(self, command: str, risk: RiskLevel, signatures: Optional[List[ApprovalSignature]] = None) -> bool:
         if risk == RiskLevel.LOW:
@@ -49,7 +51,7 @@ class ExecutionGate:
         return False
 
     def _enforce_multisig_and_timelock(self, command: str, signatures: Optional[List[ApprovalSignature]]) -> bool:
-        """Enforces N-of-M signatures and delays execution."""
+        """Enforces N-of-M signatures, Trust Diversity, and delays execution."""
         sigs = signatures or []
         if len(sigs) < self.required_signatures:
             logger.error(
@@ -60,6 +62,16 @@ class ExecutionGate:
             )
             return False
             
+        # Trust Diversity Verification (Anti Multisig-Abuse)
+        provided_roles = {sig.signer_role for sig in sigs}
+        missing_roles = self.required_roles - provided_roles
+        if missing_roles:
+            logger.error(
+                "execution_gate_trust_diversity_failed",
+                missing_roles=list(missing_roles)
+            )
+            return False
+            
         # Verify timestamps to prevent replay attacks
         now = time.time()
         for sig in sigs:
@@ -67,8 +79,12 @@ class ExecutionGate:
                 logger.error("execution_gate_signature_expired", signer=sig.signer_id)
                 return False
 
-        # Apply Time-Lock Delay
-        logger.warning(f"TIMELOCK ENGAGED: Executing CRITICAL action in {self.timelock_seconds} seconds. Press Ctrl+C to abort.")
+        # Apply Time-Lock Delay & Freeze State
+        logger.warning(f"TIMELOCK ENGAGED: Executing CRITICAL action in {self.timelock_seconds} seconds.")
+        logger.warning("AGENT STATE FROZEN: Ignoring external stimuli to prevent evasion.")
+        
+        # In a full async loop, this would suspend the agent's message queue.
+        # For now, blocking time.sleep enforces the freeze synchronously.
         time.sleep(self.timelock_seconds)
         
         logger.info("execution_gate_approved", command=command)
