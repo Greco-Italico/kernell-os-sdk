@@ -1,58 +1,125 @@
-# Kernell OS SDK — Security & Audit Overview (SOC2/ISO 27001 Ready)
+# Kernell OS SDK — Security Architecture
+### SOC2 / ISO 27001 / OWASP Audit-Ready
 
-## 1. Threat Model & Zero Trust Architecture
-
-Kernell OS SDK is built upon a **Strict Zero Trust** architecture. We assume that the LLM (Large Language Model) is inherently vulnerable to Prompt Injection, Goal Hijacking, and malicious instructions. Therefore, the security boundary is **not** the LLM's alignment, but a deterministic, capability-based Python Execution Engine.
-
-### Identified Threat Actors
-1.  **Malicious Agents (External):** Agents communicating via the AEON M2M network attempting to inject malicious payloads into delegation requests.
-2.  **Compromised LLM (Goal Hijacking):** The underlying LLM is manipulated via prompt injection to perform valid but destructive actions (e.g., exfiltrating data via `curl` or sending `$KERN` to an attacker).
-3.  **Resource Abusers (DoS):** Agents attempting to exhaust node resources via Fork Bombs or Memory Leaks.
+> **Version:** 1.2.0 — Enterprise Hardened  
+> **Last Audit:** 2026-04-19  
+> **Classification:** Financial-Grade Agent Runtime
 
 ---
 
-## 2. Security Boundaries & Defenses
+## 1. Threat Model (Zero Trust)
 
-### 2.1 Formal Capability-Based Policy Engine (DPI)
-All commands suggested by the LLM must pass through the `PolicyEngine`. It operates on a strict **Default Deny** basis.
-*   **Binary Authorization:** Commands must exist in the agent's explicit `AgentCapabilities` manifest.
-*   **Argument Inspection:** Flags and arguments are strictly validated. (e.g., `python -c` is permanently blocked to prevent RCE).
-*   **Semantic Deep Packet Inspection (DPI):** Network commands (`curl`, `wget`) are parsed to block command substitution (`$()`, \`\`, `|`) and egress is restricted to whitelisted domains (e.g., `api.kernell.site`). File commands are sandboxed to specific allowed paths, defeating symlink traversal.
+Kernell OS SDK assumes **all LLM outputs are hostile**. The security boundary is a deterministic, capability-based Python execution engine — never the model's alignment.
 
-### 2.2 gVisor Sandbox Hardening
-Agent execution does not happen on the host. It runs inside a hardened Docker container intercepted by **gVisor (`runsc`)**, providing lightweight micro-VM isolation for system calls.
-*   **Immutable Root:** `--read-only` filesystem.
-*   **Privilege Drop:** `--cap-drop=ALL` and `--security-opt=no-new-privileges`.
-*   **Anti-DoS:** Strict quotas using `--pids-limit=64` and bounded `--memory-swap`.
+### 1.1 Identified Threat Actors
 
-### 2.3 Cryptographic Identity & Supply Chain
-*   **Ed25519 Passports:** All inter-agent communication (A2A) and Escrow transactions require Ed25519 cryptographic signatures to verify authenticity and prevent spoofing.
-*   **Hash-Locked Dependencies:** The SDK is distributed with `pip-compile` generated cryptographic hashes (`requirements.txt`), mitigating PyPI supply chain attacks.
+| Actor | Vector | Mitigation Layer |
+|-------|--------|-----------------|
+| **Compromised LLM** | Prompt Injection → Goal Hijacking | PolicyEngine (DPI) |
+| **Malicious Agent** | A2A payload injection | Ed25519 Passport + Taint Propagation |
+| **Colluding Agents** | Taint Laundering (multi-agent exfil) | Distributed Taint Protocol |
+| **Resource Abuser** | Fork bombs, CPU exhaustion | gVisor + pids-limit + memory-swap |
+| **Economic Attacker** | Double-spend, TOCTOU races | Self-contained Lua + Idempotency |
+| **Insider / Oracle** | Multisig abuse | Trust Diversity Enforcement |
 
----
-
-## 3. The "Paranoid Mode" (Multi-Layer Execution Authority)
-*(Under Active Deployment)*
-
-For critical financial and enterprise operations, Kernell OS employs a **RiskEngine** to classify tasks and enforce consensus.
-
-### Risk Level Tiers:
-*   🟢 **LOW** (e.g., `ls`, `pwd`): Auto-approved by Policy Engine.
-*   🟡 **MEDIUM** (e.g., standard API queries): Subject to Behavior Monitor rate-limiting.
-*   🔴 **HIGH** (e.g., `curl` to unknown domain): Requires Explicit Sandbox Egress Rule.
-*   🚨 **CRITICAL** (e.g., `$KERN` Escrow Transfers, delegation of sensitive skills): Triggers the **Execution Gate**.
-
-### Execution Gate Defenses (Critical Tasks):
-1.  **Multi-Sig Consensus:** Requires $N$ of $M$ valid Ed25519 signatures (e.g., Agent + Human Oracle).
-2.  **Time-Locks:** Mandatory execution delays (e.g., 30 seconds) for anomaly detection and cancellation.
-3.  **Behavioral Monitoring:** Blocks valid actions if they deviate from the agent's historical baseline (Anti-Goal Hijacking).
-4.  **Immutable Audit Log:** All critical actions are cryptographically signed and appended to an immutable WAL (Write-Ahead Log) before execution.
+### 1.2 Attack Surface Assumptions
+- The LLM **will** attempt to execute arbitrary code via `-c` flags.
+- Agents **will** attempt to exfiltrate data through permitted network channels.
+- Concurrent requests **will** attempt to exploit race conditions in financial operations.
+- Colluding agents **will** attempt to launder tainted data across trust boundaries.
 
 ---
 
-## 4. Known Limitations
-*   While gVisor isolates syscalls, side-channel attacks (Spectre/Meltdown) are theoretically possible if running on shared multi-tenant hardware without strict vCPU pinning.
-*   Egress network filtering relies on application-layer DPI. Future versions will implement strict `iptables` at the Docker bridge level for kernel-level dropping of non-whitelisted packets.
+## 2. Defense-in-Depth Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    LLM (UNTRUSTED)                      │
+├─────────────────────────────────────────────────────────┤
+│  Layer 1: PolicyEngine (Capability-Based DPI)           │
+│    ├── Binary Authorization (command whitelist)         │
+│    ├── Argument Validation (flag-level)                 │
+│    ├── Python Semantic Inspection (-c BLOCKED)          │
+│    ├── Network DPI (URL parsing + exfil detection)      │
+│    └── Filesystem Containment (realpath + deny list)    │
+├─────────────────────────────────────────────────────────┤
+│  Layer 2: RiskEngine (Dynamic Behavioral Analysis)      │
+│    ├── Data Taint Tracking (ExecutionContext)            │
+│    ├── Behavior Drift Detection (rate + volume)         │
+│    ├── Chained Action Correlation                       │
+│    └── Dynamic Risk Score Mutation                      │
+├─────────────────────────────────────────────────────────┤
+│  Layer 3: ExecutionGate (Consensus & Time-Locks)        │
+│    ├── Multi-Sig (N-of-M Ed25519 signatures)            │
+│    ├── Trust Diversity (agent + oracle roles required)   │
+│    ├── Time-Lock (30s freeze before CRITICAL ops)        │
+│    └── Agent State Freeze (anti-evasion)                │
+├─────────────────────────────────────────────────────────┤
+│  Layer 4: gVisor Sandbox (Kernel Isolation)             │
+│    ├── --runtime=runsc (syscall interception)            │
+│    ├── --read-only --cap-drop=ALL                       │
+│    ├── --pids-limit=64 --memory-swap=RAMmb              │
+│    └── --network=none (when disabled)                   │
+├─────────────────────────────────────────────────────────┤
+│  Layer 5: Economic Safety Layer (Escrow Hardening)      │
+│    ├── Self-Contained Lua (TOCTOU eliminated)           │
+│    ├── Idempotency Keys (1h TTL, anti double-spend)     │
+│    ├── Circuit Breaker (50 ops/min max)                 │
+│    └── WAL-first + HMAC-signed audit trail              │
+├─────────────────────────────────────────────────────────┤
+│  Layer 6: Distributed Trust Protocol                    │
+│    ├── A2AMessage with mandatory sensitivity tags       │
+│    ├── Obligatory Taint Propagation on receipt          │
+│    └── Cryptographic signing of context + sensitivity    │
+└─────────────────────────────────────────────────────────┘
+```
 
 ---
-*For vulnerability disclosures, please contact the Kernell OS Security Team.*
+
+## 3. Key Security Controls
+
+### 3.1 PolicyEngine (`policy_engine.py`)
+- **Default Deny**: Only explicitly listed commands execute.
+- **`python -c` permanently blocked**: Eliminates arbitrary code execution.
+- **Network DPI**: Detects `$()`, backticks, and pipes in URLs (anti-exfiltration).
+- **Path containment**: `os.path.realpath()` resolves symlinks before validation.
+
+### 3.2 RiskEngine (`risk_engine.py`)
+- **Taint Tracking**: Reading sensitive files marks the agent's `ExecutionContext`.
+- **Data Flow Control**: Tainted agents attempting network egress get escalated to CRITICAL.
+- **Behavior Monitor**: Detects rate anomalies (>10 req/min) and volume drift (>500KB reads).
+
+### 3.3 ExecutionGate (`execution_gate.py`)
+- **Trust Diversity**: Multisig requires signatures from distinct roles (e.g., `agent` + `oracle`). Two agents cannot approve each other's critical operations.
+- **Replay Prevention**: Signatures expire after 5 minutes.
+- **State Freeze**: During time-lock, the agent ignores all external stimuli.
+
+### 3.4 Escrow Engine (`kap_escrow/engine.py`)
+- **TOCTOU Eliminated**: Lua scripts read metadata, compute amounts, and execute transfers in a single atomic block. No Python pre-computation of financial values.
+- **Idempotency**: Each operation gets a unique key (`idem:{op}:{contract_id}`) with 1-hour TTL. Retries return `already_processed`.
+- **Circuit Breaker**: More than 50 escrow operations in 60 seconds trips the breaker and halts all operations.
+
+### 3.5 Supply Chain
+- **Hash-locked dependencies** via `pip-compile --generate-hashes`.
+- **Ed25519 Passports** for all inter-agent identity verification.
+
+---
+
+## 4. Known Limitations & Residual Risk
+
+| Risk | Severity | Status | Mitigation Path |
+|------|----------|--------|-----------------|
+| Side-channel (Spectre/Meltdown) on shared hardware | Low | Accepted | vCPU pinning in dedicated deployments |
+| Egress filtering at IP level (vs app layer) | Medium | Planned | `iptables` rules on Docker bridge |
+| Oracle incentive alignment | Medium | Partial | Staking + slashing (roadmap) |
+| Formal verification of Lua invariants | Low | Planned | Property-based testing suite |
+
+---
+
+## 5. Vulnerability Disclosure
+
+For responsible disclosure of security vulnerabilities, contact the Kernell OS Security Team via the repository's security advisory feature.
+
+---
+
+*This document is maintained as part of the SDK's compliance artifacts and is updated with each security-relevant release.*
