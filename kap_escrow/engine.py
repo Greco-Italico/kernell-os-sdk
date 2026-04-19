@@ -22,13 +22,20 @@ from __future__ import annotations
 import json
 import time
 import uuid
-import logging
 from typing import Any, Dict, List, Optional, Tuple
+
+import structlog
+from pydantic import BaseModel, Field, field_validator
 
 from kap_escrow.wal import TransactionWAL
 from kap_escrow.signing import sign_tx
 
-logger = logging.getLogger("KAP_ESCROW")
+logger = structlog.get_logger("KAP_ESCROW")
+
+class EscrowMeta(BaseModel):
+    buyer: str = Field(..., min_length=1)
+    locked: float = Field(..., gt=0)
+    ts: float = Field(default_factory=time.time)
 
 NONCE_TTL_S = 172800  # 48h anti-replay window
 MAX_ESCROW_DURATION_S = 86400 * 7  # 7 days max before auto-reaper
@@ -150,7 +157,7 @@ class EscrowEngine:
         self._sha_refund = self.r.script_load(_LUA_REFUND)
         self._sha_settle = self.r.script_load(_LUA_SETTLE)
 
-        logger.info("EscrowEngine inicializado con firma Ed25519 activa.")
+        logger.info("escrow_engine_initialized", strict_signing=strict_signing, key_prefix=key_prefix)
 
     def _resolve_burn_rate(self) -> float:
         """
@@ -184,7 +191,7 @@ class EscrowEngine:
             nonce, str(time.time()), str(NONCE_TTL_S)
         )
         if result == 0:
-            logger.warning(f"REPLAY DETECTED: nonce={nonce[:16]}...")
+            logger.warning("replay_detected", nonce=nonce[:16])
             return False
         return True
 
@@ -208,14 +215,14 @@ class EscrowEngine:
             pipe.ltrim(tx_log, 0, 999)
             pipe.execute()
         except Exception as e:
-            logger.error(f"Redis commit failed for tx_id={record['tx_id']}: {e}")
+            logger.error("redis_commit_failed", tx_id=record['tx_id'], error=str(e))
             raise
 
         record["wal_status"] = "COMMITTED"
         try:
             self.wal.append(record)
-        except Exception:
-            logger.warning(f"WAL COMMITTED marker failed for tx_id={record['tx_id']}")
+        except Exception as e:
+            logger.warning("wal_committed_marker_failed", tx_id=record['tx_id'], error=str(e))
 
     def get_balance(self, agent: str) -> float:
         raw = self.r.get(self._wk(agent))
@@ -234,7 +241,10 @@ class EscrowEngine:
             
         wk = self._wk(buyer)
         ek = self._ek(contract_id)
-        meta = json.dumps({"buyer": buyer, "locked": amount, "ts": time.time()})
+        
+        # Validar metadata del contrato antes de serializar
+        meta_obj = EscrowMeta(buyer=buyer, locked=amount)
+        meta = meta_obj.model_dump_json()
         
         # Pessimistic Lock Lua Execution
         res = self.r.evalsha(self._sha_lock, 2, wk, ek, str(amount), meta)

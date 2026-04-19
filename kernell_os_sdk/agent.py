@@ -1,11 +1,11 @@
 import inspect
 import json
-import logging
 import shlex
 import uuid
 from typing import Callable, Dict, Any, List, Optional
 from pathlib import Path
 from pydantic import BaseModel, validate_call
+import structlog
 
 from .config import default_config, KernellConfig
 from .memory import Memory
@@ -20,7 +20,7 @@ from .health import SLOMonitor
 from .constants import VALID_PERMISSIONS
 from .llm import BaseLLMProvider, LLMMessage
 
-logger = logging.getLogger("kernell.agent")
+logger = structlog.get_logger("kernell.agent")
 
 
 class AgentState(BaseModel):
@@ -66,17 +66,17 @@ class Agent:
         try:
             self.passport = load_passport(self.storage_path)
         except SecurityError as e:
-            logger.critical(f"SECURITY VIOLATION: {e}")
+            logger.critical("security_violation", error=str(e), agent_name=name)
             raise
 
         if not self.passport:
-            logger.info(f"Creating new cryptographic passport for {name}...")
+            logger.info("creating_new_passport", agent_name=name)
             self.passport, self._private_key = create_passport(name, storage_dir=self.storage_path)
         else:
             # Load the encrypted private key
             self._private_key = load_private_key(self.storage_path)
             if not self._private_key:
-                logger.warning(f"Private key not found for {name}. Agent cannot sign messages.")
+                logger.warning("private_key_not_found", agent_name=name)
 
         self.id = self.passport.agent_id
 
@@ -101,9 +101,8 @@ class Agent:
         if self.permissions.gui_automation or self.permissions.execute_commands:
             self._register_computer_use_skills()
 
-        logger.info(f"Initialized Agent '{self.name}'")
-        logger.info(f"Passport ID: {self.id} | KAP: {self.passport.kap_address}")
-        logger.info(f"Dual Wallet | Volatile: {self.passport.kern_volatile_address} | SOL: {self.passport.kern_solana_address or 'Pending Bridge'}")
+        logger.info("agent_initialized", agent_name=self.name, agent_id=self.id, kap_address=self.passport.kap_address)
+        logger.info("wallet_status", volatile_address=self.passport.kern_volatile_address, solana_address=self.passport.kern_solana_address or "pending")
 
     def _is_command_safe(self, command: str) -> bool:
         """
@@ -113,14 +112,14 @@ class Agent:
         if not command or not command.strip():
             return False
         if len(command) > 1024:
-            logger.warning(f"[SECURITY] Comando demasiado largo ({len(command)} chars)")
+            logger.warning("security_command_too_long", length=len(command), command=command[:50])
             return False
 
         from .constants import COMMAND_SAFELIST
         try:
             parts = shlex.split(command)
         except ValueError as e:
-            logger.warning(f"[SECURITY] No se pudo parsear el comando: {e}")
+            logger.warning("security_command_parse_error", error=str(e), command=command[:50])
             return False
 
         if not parts:
@@ -130,7 +129,7 @@ class Agent:
         base_cmd = parts[0].split("/")[-1].split("\\")[-1]
 
         if base_cmd not in COMMAND_SAFELIST:
-            logger.warning(f"[SECURITY] Comando no en whitelist bloqueado: '{base_cmd}'")
+            logger.warning("security_command_not_in_whitelist", command_base=base_cmd)
             return False
 
         return True
