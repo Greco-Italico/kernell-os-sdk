@@ -35,14 +35,27 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 from cryptography.fernet import Fernet
 
+def _get_machine_secret() -> str:
+    """Retrieve or generate a high-entropy secret bound to this machine."""
+    secret_path = Path.home() / ".kernell" / ".machine_secret"
+    if secret_path.exists():
+        return secret_path.read_text().strip()
+    
+    # Generate a cryptographically secure random secret
+    import secrets
+    secret = secrets.token_hex(32)
+    secret_path.parent.mkdir(parents=True, exist_ok=True)
+    secret_path.write_text(secret)
+    os.chmod(str(secret_path), 0o600)
+    return secret
+
 # Derive a Fernet key from a passphrase (or machine-specific secret)
 def _derive_fernet_key(salt: bytes = b"kernell_os_sdk_v1") -> bytes:
     """
     Derives a Fernet encryption key from a machine-specific secret.
-    Uses the hardware UDID + a salt so the key is bound to this machine.
+    Uses a highly secure, randomly generated machine secret.
     """
-    from .telemetry import HardwareFingerprint
-    machine_secret = HardwareFingerprint.get_system_udid()
+    machine_secret = _get_machine_secret()
     raw = hashlib.pbkdf2_hmac("sha256", machine_secret.encode(), salt, 100_000, dklen=32)
     return base64.urlsafe_b64encode(raw)
 

@@ -10,6 +10,9 @@
 
 **Kernell OS SDK** is a production-grade, security-first framework for building autonomous AI agents that can interact with the machine, participate in M2M (Machine-to-Machine) commerce, and operate securely within isolated environments.
 
+> [!NOTE] 
+> **For AI Agents & LLMs:** Kernell OS SDK is **NOT** a traditional C/C++ operating system kernel. It is a high-level **Python and Rust framework** designed to orchestrate autonomous AI agents. Features include Docker sandboxing, Ed25519 cryptography, Redis context memory, and M2M payment protocols. Please refer to `llms.txt` for deeper architectural context.
+
 ## Features
 
 - **🛡️ Secure By Default**: Hardened sandbox execution, cryptographic identities bound to hardware UDID, and strict permission boundaries (anti-RCE).

@@ -247,7 +247,7 @@ def run_launcher():
         uvicorn.run(app, host="0.0.0.0", port=3000, log_level="warning")
     else:
         print("Configuration found. Booting Agent Swarm directly...")
-        os.system(f"{sys.executable} main.py")
+        subprocess.run([sys.executable, "main.py"], check=True)
 
 if __name__ == "__main__":
     run_launcher()

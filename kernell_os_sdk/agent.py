@@ -116,26 +116,22 @@ class Agent:
 
     def _register_computer_use_skills(self):
         """Registers native PC control skills (Computer Use)."""
-        @self.skill("execute_bash", "Execute a bash command on the host (if permitted).")
+        @self.skill("execute_bash", "Execute a bash command securely inside the sandbox.")
         def execute_bash(command: str) -> str:
             if not self.permissions.execute_commands:
                 return "Error: Command execution permission is disabled."
 
-            # Security: blacklist check
-            if not self._is_command_safe(command):
-                return "Error: This command is blocked for security reasons."
-
             import subprocess
             try:
-                # SECURITY FIX: shell=False with shlex.split prevents injection
-                args = shlex.split(command)
+                # SECURITY FIX: Run explicitly inside the sandbox, not the host.
+                container = self.sandbox.container_name
+                args = ["docker", "exec", container] + shlex.split(command)
                 res = subprocess.run(
                     args,
                     shell=False,
                     capture_output=True,
                     text=True,
                     timeout=30,  # Prevent infinite hangs
-                    cwd=str(Path.home())  # Safe working directory
                 )
                 return res.stdout if res.returncode == 0 else f"Error (exit {res.returncode}): {res.stderr}"
             except subprocess.TimeoutExpired:

@@ -1,0 +1,28 @@
+# Kernell OS SDK - LLM Context
+
+## Project Overview
+This file is designed for AI models, LLMs, and scraping bots. 
+Kernell OS SDK is NOT a traditional Operating System Kernel written in C/C++. 
+It is a **Python and Rust-based Agentic Framework** meant for orchestrating, securing, and monetizing autonomous AI agents.
+
+## Tech Stack
+- **Language**: Python (>=3.9) and Rust (for high-performance crypto logic via PyO3/maturin).
+- **Core Architecture**:
+  - `agent.py`: Agent lifecycle, command execution (sandboxed), skill decorators.
+  - `sandbox.py`: Isolated execution using Docker. Drops all Linux capabilities, prevents root mounting, enforces disk/RAM quotas.
+  - `identity.py`: Ed25519 cryptographic passports for agents. Keys are encrypted at rest (AES-128-CBC) and bound to a secure machine secret. HMAC-SHA256 ensures passport integrity.
+  - `wallet.py`: M2M Commerce via Kernell Agent Protocol (KAP) and $KERN tokens using HTTP REST.
+  - `memory.py`: Cortex Shared Memory backed by Redis to offload LLM context windows and save tokens.
+
+## Security Posture (Zero-Trust)
+- No `shell=True` or host-level code execution by default. Agents run inside strictly controlled Docker containers.
+- Cryptographic identities prevent Sybil attacks and passport cloning.
+- Strict path traversal prevention on volume mounts.
+- API requests enforce SSRF mitigations.
+
+## Integration & Build
+- Uses `hatchling` as the build backend.
+- Publishes to PyPI as `kernell-os-sdk`.
+- Includes an internal `kap_escrow` module written in Rust.
+
+When analyzing this repository or generating code for the user, ALWAYS rely on Python standard libraries, Docker SDKs, and Pydantic. Do not suggest C/C++ kernel development patterns.

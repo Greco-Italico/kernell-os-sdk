@@ -78,13 +78,17 @@ class Sandbox:
         if self.permissions.file_system_read or self.permissions.file_system_write:
             mode = "rw" if self.permissions.file_system_write else "ro"
             for host_path in self.permissions.allowed_paths:
-                host_path = str(Path(host_path).resolve())
-                # Safety check: reject root mounts
-                if host_path == "/" or host_path == "":
-                    logger.error(f"SECURITY: Refused to mount root filesystem!")
+                resolved_path = Path(host_path).resolve()
+                host_path_str = str(resolved_path)
+                
+                # Strict safety check against path traversal and sensitive mounts
+                forbidden_prefixes = ["/etc", "/root", "/var", "/sys", "/dev", "/boot", "/usr/lib"]
+                if host_path_str == "/" or host_path_str == "" or any(host_path_str.startswith(p) for p in forbidden_prefixes) or "docker.sock" in host_path_str:
+                    logger.error(f"SECURITY: Refused to mount sensitive host path: {host_path_str}")
                     continue
-                container_path = f"/workspace/{Path(host_path).name}"
-                args.extend(["-v", f"{host_path}:{container_path}:{mode}"])
+                
+                container_path = f"/workspace/{resolved_path.name}"
+                args.extend(["-v", f"{host_path_str}:{container_path}:{mode}"])
 
         # For full computer use, we need X11/Wayland socket access
         if self.permissions.gui_automation:

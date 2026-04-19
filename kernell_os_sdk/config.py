@@ -8,7 +8,7 @@ SECURITY:
 """
 import os
 from typing import Optional
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class KernellConfig(BaseModel):
@@ -18,6 +18,15 @@ class KernellConfig(BaseModel):
 
     api_key: str = Field(default_factory=lambda: os.getenv("KERNELL_API_KEY", ""))
     gateway_url: str = Field(default_factory=lambda: os.getenv("KERNELL_GATEWAY_URL", "https://api.kernell.site"))
+    
+    @field_validator("gateway_url")
+    @classmethod
+    def validate_gateway_url(cls, v: str) -> str:
+        allowed_domains = ["https://api.kernell.site", "http://localhost", "http://127.0.0.1"]
+        if not any(v.startswith(domain) for domain in allowed_domains):
+            raise ValueError("SSRF Protection: gateway_url must be an approved Kernell domain or localhost.")
+        return v
+        
     redis_url: Optional[str] = Field(default_factory=lambda: os.getenv("KERNELL_REDIS_URL", None))
     environment: str = Field(default_factory=lambda: os.getenv("KERNELL_ENV", "development"))
 
