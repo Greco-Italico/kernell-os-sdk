@@ -5,7 +5,7 @@ import shlex
 import uuid
 from typing import Callable, Dict, Any, List, Optional
 from pathlib import Path
-from pydantic import BaseModel
+from pydantic import BaseModel, validate_call
 
 from .config import default_config, KernellConfig
 from .memory import Memory
@@ -17,7 +17,7 @@ from .identity import (
 from .sandbox import Sandbox, ResourceLimits, AgentPermissions
 from .budget import TokenBudget
 from .health import SLOMonitor
-from .constants import VALID_PERMISSIONS, COMMAND_BLACKLIST
+from .constants import VALID_PERMISSIONS
 from .llm import BaseLLMProvider, LLMMessage
 
 logger = logging.getLogger("kernell.agent")
@@ -106,38 +106,65 @@ class Agent:
         logger.info(f"Dual Wallet | Volatile: {self.passport.kern_volatile_address} | SOL: {self.passport.kern_solana_address or 'Pending Bridge'}")
 
     def _is_command_safe(self, command: str) -> bool:
-        """Check command against the blacklist."""
-        cmd_lower = command.lower().strip()
-        for blocked in COMMAND_BLACKLIST:
-            if blocked in cmd_lower:
-                logger.warning(f"[SECURITY] Blocked dangerous command: {command[:50]}...")
-                return False
+        """
+        Whitelist-based command validation.
+        MUCHO más seguro que una blacklist (que siempre puede bypassearse).
+        """
+        if not command or not command.strip():
+            return False
+        if len(command) > 1024:
+            logger.warning(f"[SECURITY] Comando demasiado largo ({len(command)} chars)")
+            return False
+
+        from .constants import COMMAND_SAFELIST
+        try:
+            parts = shlex.split(command)
+        except ValueError as e:
+            logger.warning(f"[SECURITY] No se pudo parsear el comando: {e}")
+            return False
+
+        if not parts:
+            return False
+
+        # Extraer el comando base (sin path: 'cat' de '/usr/bin/cat')
+        base_cmd = parts[0].split("/")[-1].split("\\")[-1]
+
+        if base_cmd not in COMMAND_SAFELIST:
+            logger.warning(f"[SECURITY] Comando no en whitelist bloqueado: '{base_cmd}'")
+            return False
+
         return True
 
     def _register_computer_use_skills(self):
         """Registers native PC control skills (Computer Use)."""
-        @self.skill("execute_bash", "Execute a bash command securely inside the sandbox.")
+        @self.skill("execute_bash", "Ejecuta un comando bash seguro dentro del sandbox.")
         def execute_bash(command: str) -> str:
             if not self.permissions.execute_commands:
-                return "Error: Command execution permission is disabled."
+                return "Error: permiso 'execute_commands' está deshabilitado."
+
+            # ← FIX: La llamada que faltaba
+            if not self._is_command_safe(command):
+                return "Error: [SECURITY] Comando bloqueado por política de seguridad."
 
             import subprocess
             try:
-                # SECURITY FIX: Run explicitly inside the sandbox, not the host.
                 container = self.sandbox.container_name
-                args = ["docker", "exec", container] + shlex.split(command)
+                # Usar '--' para separar opciones de docker del comando
+                args = ["docker", "exec", "--", container] + shlex.split(command)
                 res = subprocess.run(
                     args,
                     shell=False,
                     capture_output=True,
                     text=True,
-                    timeout=30,  # Prevent infinite hangs
+                    timeout=30,
                 )
-                return res.stdout if res.returncode == 0 else f"Error (exit {res.returncode}): {res.stderr}"
+                if res.returncode == 0:
+                    return res.stdout[:10_000]  # Límite de output
+                return f"Error (exit {res.returncode}): {res.stderr[:2000]}"
             except subprocess.TimeoutExpired:
-                return "Error: Command timed out after 30 seconds."
+                return "Error: Comando expiró después de 30 segundos."
             except Exception as e:
-                return f"Error: {str(e)}"
+                return f"Error inesperado: {str(e)[:500]}"
 
         @self.skill("mouse_click", "Click a specific coordinate on the screen.")
         def mouse_click(x: int, y: int) -> str:
@@ -195,9 +222,10 @@ class Agent:
                 }
             }
 
-            self._skills[skill_name] = func
+            validated_func = validate_call(func)
+            self._skills[skill_name] = validated_func
             self._skill_schemas.append(schema)
-            return func
+            return validated_func
         return decorator
 
     def toggle_permission(self, permission: str, state: bool):

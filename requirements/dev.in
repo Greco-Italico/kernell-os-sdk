@@ -1,0 +1,9 @@
+# requirements/dev.in
+-r base.in
+pytest>=8.0.0,<9.0.0
+pytest-asyncio>=0.23.0
+bandit>=1.7.0           # SAST — análisis estático de seguridad
+pip-audit>=2.7.0        # Auditoría de dependencias contra CVE DB
+safety>=3.0.0           # Alternativa a pip-audit
+mypy>=1.10.0
+ruff>=0.4.0

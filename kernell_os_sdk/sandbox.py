@@ -20,8 +20,37 @@ from pydantic import BaseModel, Field
 logger = logging.getLogger("kernell.sandbox")
 
 # Docker image digest for supply chain verification
-AGENT_BASE_IMAGE = "kernell/agent-base:latest"
-# TODO: Pin to digest: kernell/agent-base@sha256:<known-good-hash>
+AGENT_BASE_IMAGE_TAG = "kernell/agent-base:latest"  # Para referencia humana
+# ↓ Usar este en producción (inmutable, no puede ser reemplazado silenciosamente)
+AGENT_BASE_IMAGE = "kernell/agent-base@sha256:REEMPLAZAR_CON_DIGEST_REAL_DE_SHA256"
+
+def _verify_image_integrity() -> bool:
+    """
+    Verifica que la imagen Docker local coincide con el digest esperado.
+    Llama esto antes de start() para detectar imágenes comprometidas.
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "inspect", "--format={{index .RepoDigests 0}}", AGENT_BASE_IMAGE_TAG],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode != 0:
+            logger.error("No se pudo inspeccionar la imagen Docker")
+            return False
+
+        actual_ref = result.stdout.strip()
+        expected_sha = AGENT_BASE_IMAGE.split("@sha256:")[-1]
+        if expected_sha not in actual_ref:
+            logger.critical(
+                f"⚠️  ALERTA DE SEGURIDAD: Digest de imagen no coincide!\n"
+                f"   Esperado: ...{expected_sha[:16]}\n"
+                f"   Actual: {actual_ref[:80]}"
+            )
+            return False
+        return True
+    except subprocess.TimeoutExpired:
+        logger.error("Timeout verificando imagen Docker")
+        return False
 
 
 class ResourceLimits(BaseModel):
@@ -111,6 +140,10 @@ class Sandbox:
                 ["docker", "rm", "-f", self.container_name],
                 capture_output=True, timeout=10
             )
+
+            if not _verify_image_integrity():
+                logger.error("Sandbox deployment aborted due to image integrity verification failure.")
+                return False
 
             cmd = self._build_docker_args()
             logger.info(f"Docker command: {' '.join(cmd[:6])}...")  # Log truncated for security

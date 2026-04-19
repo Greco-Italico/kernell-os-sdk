@@ -17,6 +17,7 @@ Usage:
 """
 import time
 import logging
+import threading
 from typing import Optional, Dict
 from dataclasses import dataclass, field
 
@@ -61,6 +62,7 @@ class TokenBudget:
         self._day_start: float = time.time()
 
         self._consecutive_overages: int = 0
+        self._lock = threading.Lock()  # Thread-safety for concurrent agents
 
     def _rotate_windows(self):
         """Reset counters when the time window expires."""
@@ -76,38 +78,40 @@ class TokenBudget:
 
     def can_spend(self, estimated_tokens: int = 0) -> bool:
         """Check if the agent can spend the estimated number of tokens."""
-        self._rotate_windows()
+        with self._lock:
+            self._rotate_windows()
 
-        if self._hourly_used + estimated_tokens > self.hourly_limit:
-            self._consecutive_overages += 1
-            logger.warning(
-                f"[{self.agent_name}] HOURLY budget would exceed: "
-                f"{self._hourly_used + estimated_tokens}/{self.hourly_limit}"
-            )
-            return False
+            if self._hourly_used + estimated_tokens > self.hourly_limit:
+                self._consecutive_overages += 1
+                logger.warning(
+                    f"[{self.agent_name}] HOURLY budget would exceed: "
+                    f"{self._hourly_used + estimated_tokens}/{self.hourly_limit}"
+                )
+                return False
 
-        if self._daily_used + estimated_tokens > self.daily_limit:
-            self._consecutive_overages += 1
-            logger.warning(
-                f"[{self.agent_name}] DAILY budget would exceed: "
-                f"{self._daily_used + estimated_tokens}/{self.daily_limit}"
-            )
-            return False
+            if self._daily_used + estimated_tokens > self.daily_limit:
+                self._consecutive_overages += 1
+                logger.warning(
+                    f"[{self.agent_name}] DAILY budget would exceed: "
+                    f"{self._daily_used + estimated_tokens}/{self.daily_limit}"
+                )
+                return False
 
-        self._consecutive_overages = 0
-        return True
+            self._consecutive_overages = 0
+            return True
 
     def record(self, tokens_used: int):
         """Record actual tokens consumed after an LLM call."""
-        self._rotate_windows()
-        self._hourly_used += tokens_used
-        self._daily_used += tokens_used
-        self._total_used += tokens_used
-        logger.debug(
-            f"[{self.agent_name}] Recorded {tokens_used} tokens. "
-            f"Hourly: {self._hourly_used}/{self.hourly_limit} | "
-            f"Daily: {self._daily_used}/{self.daily_limit}"
-        )
+        with self._lock:
+            self._rotate_windows()
+            self._hourly_used += tokens_used
+            self._daily_used += tokens_used
+            self._total_used += tokens_used
+            logger.debug(
+                f"[{self.agent_name}] Recorded {tokens_used} tokens. "
+                f"Hourly: {self._hourly_used}/{self.hourly_limit} | "
+                f"Daily: {self._daily_used}/{self.daily_limit}"
+            )
 
     def snapshot(self) -> BudgetSnapshot:
         """Get a point-in-time snapshot of the budget state."""

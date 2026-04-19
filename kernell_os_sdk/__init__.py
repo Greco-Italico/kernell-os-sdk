@@ -1,6 +1,11 @@
-"""Kernell OS SDK — Open-Source Agent Framework v0.5.0"""
+"""Kernell OS SDK — Open-Source Agent Framework"""
 
-__version__ = "1.0.3"
+from importlib.metadata import version as _pkg_version, PackageNotFoundError
+try:
+    __version__ = _pkg_version("kernell-os-sdk")
+except PackageNotFoundError:
+    __version__ = "dev"
+
 __author__ = "Kernell OS"
 
 from kernell_os_sdk.agent import Agent

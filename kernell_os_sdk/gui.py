@@ -30,31 +30,8 @@ except ImportError:
 
 logger = logging.getLogger("kernell.gui")
 
-# Valid permission names (whitelist)
-VALID_PERMISSIONS = {
-    "network_access", "file_system_read", "file_system_write",
-    "execute_commands", "browser_control", "gui_automation"
-}
-
-# Rate limiting state
-_rate_limit_store: dict = {}
-RATE_LIMIT_WINDOW = 60  # seconds
-RATE_LIMIT_MAX = 30     # requests per window
-
-
-def _check_rate_limit(client_ip: str) -> bool:
-    """Returns True if the request should be allowed."""
-    now = time.time()
-    if client_ip not in _rate_limit_store:
-        _rate_limit_store[client_ip] = []
-    # Clean old entries
-    _rate_limit_store[client_ip] = [
-        t for t in _rate_limit_store[client_ip] if now - t < RATE_LIMIT_WINDOW
-    ]
-    if len(_rate_limit_store[client_ip]) >= RATE_LIMIT_MAX:
-        return False
-    _rate_limit_store[client_ip].append(now)
-    return True
+# Import from single source of truth
+from .constants import VALID_PERMISSIONS, RateLimiter  # noqa: F401
 
 
 class AgentGUI:
@@ -63,14 +40,20 @@ class AgentGUI:
         self.agent = agent
         self.port = port
         self.auth_token = secrets.token_urlsafe(32)
+        self._rate_limiter = RateLimiter(max_requests=30, window_seconds=60)
         self.app = FastAPI(title=f"Kernell Control Panel - {self.agent.name}")
 
-        # Restrict CORS to localhost only
+        # Restrict CORS to exact localhost port
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["http://127.0.0.1:*", "http://localhost:*"],
+            allow_origins=[
+                f"http://127.0.0.1:{self.port}",
+                f"http://localhost:{self.port}",
+            ],
+            allow_credentials=False,
             allow_methods=["GET", "POST"],
             allow_headers=["Authorization", "Content-Type"],
+            max_age=600,
         )
 
         self._setup_routes()
@@ -210,7 +193,7 @@ class AgentGUI:
         def update_permission(permission: str, request: Request, data: dict):
             # Rate limiting
             client_ip = request.client.host if request.client else "unknown"
-            if not _check_rate_limit(client_ip):
+            if not self._rate_limiter.is_allowed(client_ip):
                 raise HTTPException(status_code=429, detail="Rate limit exceeded")
 
             # Authentication

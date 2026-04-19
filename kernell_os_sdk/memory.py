@@ -15,12 +15,13 @@ Usage:
     summary = memory.summarize_context(max_tokens=300)
 """
 import json
-import logging
 from typing import Any, Dict, List, Optional
+
+import structlog
 
 from .config import default_config, KernellConfig
 
-logger = logging.getLogger("kernell.memory")
+logger = structlog.get_logger("kernell.memory")
 
 try:
     import redis
@@ -66,9 +67,9 @@ class Memory:
             try:
                 self._redis = redis.Redis.from_url(self.config.redis_url)
                 self._redis.ping()
-                logger.info(f"Memory connected to Redis for agent {agent_id}")
+                logger.info("memory_connected", agent_id=agent_id)
             except redis.ConnectionError as error:
-                logger.warning(f"Redis connection failed: {error}. Memory will be local-only.")
+                logger.warning("redis_connection_failed", error=str(error), agent_id=agent_id)
                 self._redis = None
 
     @property
@@ -88,8 +89,13 @@ class Memory:
             return
 
         redis_key = _build_memory_key(self.agent_id, key)
-        serialized_value = json.dumps(value)
-        self._redis.setex(redis_key, ttl, serialized_value)
+        try:
+            serialized_value = json.dumps(value)
+            self._redis.setex(redis_key, ttl, serialized_value)
+        except TypeError as error:
+            logger.error("memory_store_failed_serialization", key=key, error=str(error), agent_id=self.agent_id)
+        except redis.RedisError as error:
+            logger.error("memory_store_failed_redis", key=key, error=str(error), agent_id=self.agent_id)
 
     def fetch(self, key: str) -> Optional[Any]:
         """Fetch a value from short-term memory.
@@ -100,12 +106,17 @@ class Memory:
             return None
 
         redis_key = _build_memory_key(self.agent_id, key)
-        raw_data = self._redis.get(redis_key)
-
-        if raw_data is None:
+        try:
+            raw_data = self._redis.get(redis_key)
+            if raw_data is None:
+                return None
+            return json.loads(raw_data)
+        except json.JSONDecodeError as error:
+            logger.error("memory_fetch_failed_decode", key=key, error=str(error), agent_id=self.agent_id)
             return None
-
-        return json.loads(raw_data)
+        except redis.RedisError as error:
+            logger.error("memory_fetch_failed_redis", key=key, error=str(error), agent_id=self.agent_id)
+            return None
 
     def add_episodic(self, event: str, metadata: Optional[Dict[str, Any]] = None) -> None:
         """Append an event to the long-term episodic memory stream.
@@ -118,14 +129,18 @@ class Memory:
             return
 
         stream_key = _build_stream_key(self.agent_id)
-        payload = json.dumps({"event": event, "metadata": metadata or {}})
-        self._redis.xadd(stream_key, {"payload": payload})
+        try:
+            payload = json.dumps({"event": event, "metadata": metadata or {}})
+            self._redis.xadd(stream_key, {"payload": payload})
+        except TypeError as error:
+            logger.error("memory_add_episodic_failed_serialization", event=event, error=str(error), agent_id=self.agent_id)
+        except redis.RedisError as error:
+            logger.error("memory_add_episodic_failed_redis", event=event, error=str(error), agent_id=self.agent_id)
 
     def summarize_context(self, max_tokens: int = 500) -> str:
         """Retrieve a condensed summary of the agent's recent history.
 
         This avoids passing 50k+ token chat histories to the LLM.
-        In a full implementation, this would call the Cortex compression engine.
 
         Args:
             max_tokens: Maximum token budget for the summary (advisory).
@@ -137,19 +152,27 @@ class Memory:
             return "No recent memory available."
 
         stream_key = _build_stream_key(self.agent_id)
-        # xrevrange returns newest-first; we reverse to get chronological order
-        raw_events = self._redis.xrevrange(
-            stream_key,
-            count=DEFAULT_RECENT_EVENT_COUNT,
-        )
+        
+        try:
+            raw_events = self._redis.xrevrange(
+                stream_key,
+                count=DEFAULT_RECENT_EVENT_COUNT,
+            )
+        except redis.RedisError as error:
+            logger.error("memory_summarize_failed_redis", error=str(error), agent_id=self.agent_id)
+            return "No recent memory available."
 
         if not raw_events:
             return "No recent memory available."
 
         summary_lines = ["Recent events:"]
         for _event_id, event_data in reversed(raw_events):
-            payload = json.loads(event_data[b"payload"])
-            event_name = payload.get("event", "unknown")
-            summary_lines.append(f"- {event_name}")
+            try:
+                payload = json.loads(event_data[b"payload"])
+                event_name = payload.get("event", "unknown")
+                summary_lines.append(f"- {event_name}")
+            except (json.JSONDecodeError, KeyError) as error:
+                logger.warning("memory_summarize_skipped_event", error=str(error), agent_id=self.agent_id)
+                continue
 
         return "\n".join(summary_lines)

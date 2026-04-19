@@ -24,21 +24,8 @@ try:
 except ImportError:
     HAS_DEPS = False
 
-VALID_PERMISSIONS = {
-    "network_access", "file_system_read", "file_system_write",
-    "execute_commands", "browser_control", "gui_automation"
-}
-
-# Rate limiter
-_rl: dict = {}
-def _rate_ok(ip: str, window: int = 60, mx: int = 60) -> bool:
-    now = time.time()
-    _rl.setdefault(ip, [])
-    _rl[ip] = [t for t in _rl[ip] if now - t < window]
-    if len(_rl[ip]) >= mx:
-        return False
-    _rl[ip].append(now)
-    return True
+# Import from single source of truth
+from .constants import VALID_PERMISSIONS, RateLimiter  # noqa: F401
 
 
 class CommandCenter:
@@ -51,12 +38,18 @@ class CommandCenter:
         self._api_keys: Dict[str, str] = {}  # tool_name → masked key
         self._api_keys_raw: Dict[str, str] = {}  # tool_name → actual key
         self._audit_log: list = []
+        self._rate_limiter = RateLimiter(max_requests=60, window_seconds=60)
         self.app = FastAPI(title=f"Kernell Command Center — {agent.name}")
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["http://127.0.0.1:*", "http://localhost:*"],
+            allow_origins=[
+                f"http://127.0.0.1:{self.port}",
+                f"http://localhost:{self.port}",
+            ],
+            allow_credentials=False,
             allow_methods=["GET", "POST", "DELETE"],
             allow_headers=["Authorization", "Content-Type"],
+            max_age=600,
         )
         self._setup()
 
@@ -103,7 +96,7 @@ class CommandCenter:
         def toggle_perm(perm: str, request: Request, data: dict):
             self._auth(request)
             ip = request.client.host if request.client else ""
-            if not _rate_ok(ip): raise HTTPException(429)
+            if not self._rate_limiter.is_allowed(ip): raise HTTPException(429)
             if perm not in VALID_PERMISSIONS: raise HTTPException(400, f"Invalid: {perm}")
             if not isinstance(data.get("state"), bool): raise HTTPException(400)
             self.agent.toggle_permission(perm, data["state"])

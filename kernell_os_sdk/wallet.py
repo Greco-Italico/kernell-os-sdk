@@ -11,25 +11,44 @@ Usage:
     escrow_id = wallet.request_payment_escrow(amount=50.0, task_id="t1", payer_id="agent_2")
     wallet.release_escrow(escrow_id)
 """
-import logging
+import re
 from typing import Optional
 
 import httpx
+import structlog
+from pydantic import BaseModel, Field, field_validator
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 from .config import default_config, KernellConfig
 
-logger = logging.getLogger("kernell.wallet")
+logger = structlog.get_logger("kernell.wallet")
 
 # Default timeout for all HTTP operations (seconds)
 REQUEST_TIMEOUT = 10.0
+
+# Patrón para direcciones de wallet válidas (alfanumérico + guiones/underscore)
+_WALLET_ADDR_RE = re.compile(r'^[a-zA-Z0-9_\-]{8,128}$')
+
+
+class EscrowRequest(BaseModel):
+    amount: float = Field(..., gt=0.0, description="Amount must be strictly positive")
+    task_id: str = Field(..., min_length=1, max_length=128)
+    payer: str = Field(..., min_length=1, max_length=128)
+    payee: str
+    ttl: int = Field(default=3600, ge=60, le=86400 * 30)
+
+    @field_validator("payee")
+    def validate_payee(cls, v):
+        if not _WALLET_ADDR_RE.match(str(v)):
+            raise ValueError("Invalid payee wallet address format")
+        return v
 
 
 class Wallet:
     """
     Handles M2M commerce via the Kernell Agent Protocol (KAP).
 
-    Each agent has a volatile $KERN wallet for internal transactions
-    and optionally a Solana SPL wallet for on-chain settlement.
+    Each agent has a volatile $KERN wallet for internal transactions.
     """
 
     def __init__(self, config: Optional[KernellConfig] = None):
@@ -40,32 +59,56 @@ class Wallet:
             timeout=REQUEST_TIMEOUT,
         )
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
+        reraise=True
+    )
+    def _get_balance_with_retry(self, endpoint: str) -> float:
+        response = self._client.get(endpoint)
+        response.raise_for_status()
+        return float(response.json().get("balance", 0.0))
+
     def get_balance(self) -> float:
         """Fetch the current $KERN balance from the gateway.
 
         Returns 0.0 if no wallet is configured or the gateway is unreachable.
         """
-        if not self.config.wallet_address:
-            logger.debug("No wallet address configured — balance is 0.0")
+        addr = self.config.wallet_address
+
+        # Validar formato antes de usar en URL
+        if not addr or not _WALLET_ADDR_RE.match(str(addr)):
+            logger.debug("invalid_wallet_address_or_missing", addr=addr)
             return 0.0
 
         try:
-            endpoint = f"/api/v1/wallet/{self.config.wallet_address}/balance"
-            response = self._client.get(endpoint)
-            response.raise_for_status()
-            return response.json().get("balance", 0.0)
+            endpoint = f"/api/v1/wallet/{addr}/balance"
+            return self._get_balance_with_retry(endpoint)
         except httpx.HTTPStatusError as error:
-            logger.warning(f"Balance check failed (HTTP {error.response.status_code})")
+            logger.warning("balance_check_failed_http", status=error.response.status_code)
             return 0.0
-        except httpx.RequestError as error:
-            logger.warning(f"Balance check failed (network): {error}")
+        except (httpx.RequestError, ValueError) as error:
+            logger.warning("balance_check_failed_network", error=str(error))
             return 0.0
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(httpx.RequestError),
+        reraise=True
+    )
+    def _post_escrow_with_retry(self, payload: dict) -> httpx.Response:
+        response = self._client.post("/api/v1/escrow/create", json=payload)
+        response.raise_for_status()
+        return response
 
     def request_payment_escrow(
         self,
         amount: float,
         task_id: str,
         payer_id: str,
+        ttl_seconds: int = 3600,
     ) -> str:
         """Request funds to be held in escrow for a specific task.
 
@@ -73,25 +116,38 @@ class Wallet:
             amount: Number of $KERN tokens to escrow.
             task_id: Unique identifier for the task being paid for.
             payer_id: Agent ID of the entity funding the escrow.
+            ttl_seconds: Time-to-live for the escrow in seconds (default: 3600).
 
         Returns:
             The escrow ID string.
 
         Raises:
             httpx.HTTPStatusError: If the gateway rejects the request.
+            ValueError: If input validation fails.
         """
-        payload = {
-            "amount": amount,
-            "task_id": task_id,
-            "payer": payer_id,
-            "payee": self.config.wallet_address,
-        }
-        response = self._client.post("/api/v1/escrow/create", json=payload)
-        response.raise_for_status()
+        # Validate using Pydantic
+        req = EscrowRequest(
+            amount=amount,
+            task_id=task_id,
+            payer=payer_id,
+            payee=self.config.wallet_address,
+            ttl=ttl_seconds
+        )
 
+        response = self._post_escrow_with_retry(req.model_dump())
         escrow_id = response.json().get("escrow_id", "")
-        logger.info(f"Escrow created: {escrow_id} ({amount} KERN for task {task_id})")
+        
+        logger.info("escrow_created", escrow_id=escrow_id, amount=amount, task_id=task_id, payer=payer_id)
         return escrow_id
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=10),
+        retry=retry_if_exception_type(httpx.RequestError),
+        reraise=True
+    )
+    def _release_escrow_with_retry(self, escrow_id: str) -> httpx.Response:
+        return self._client.post(f"/api/v1/escrow/{escrow_id}/release")
 
     def release_escrow(self, escrow_id: str) -> bool:
         """Release escrowed funds upon task completion.
@@ -103,15 +159,15 @@ class Wallet:
             True if the release was successful, False otherwise.
         """
         try:
-            response = self._client.post(f"/api/v1/escrow/{escrow_id}/release")
+            response = self._release_escrow_with_retry(escrow_id)
             is_success = response.status_code == 200
             if is_success:
-                logger.info(f"Escrow {escrow_id} released successfully")
+                logger.info("escrow_released", escrow_id=escrow_id)
             else:
-                logger.warning(f"Escrow {escrow_id} release failed (HTTP {response.status_code})")
+                logger.warning("escrow_release_failed_http", escrow_id=escrow_id, status=response.status_code)
             return is_success
         except httpx.RequestError as error:
-            logger.error(f"Escrow release failed (network): {error}")
+            logger.error("escrow_release_failed_network", escrow_id=escrow_id, error=str(error))
             return False
 
     def close(self):

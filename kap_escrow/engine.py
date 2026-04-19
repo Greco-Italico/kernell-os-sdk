@@ -119,13 +119,27 @@ class EscrowEngine:
     def __init__(
         self,
         redis_client,
-        private_key: bytes = b"",
+        private_key: bytes,          # ← Sin default, siempre requerido
         wal_path: str = "./kap_escrow_wal.bin",
-        burn_rate: Optional[float] = None,
+        burn_rate: float | None = None,
         key_prefix: str = "kap",
+        strict_signing: bool = True, # ← Nueva bandera de seguridad
     ):
+        if not isinstance(private_key, bytes) or len(private_key) == 0:
+            raise TypeError(
+                "EscrowEngine requiere 'private_key' como bytes de 32 caracteres (Ed25519 seed). "
+                "Genera una clave segura con:\n"
+                "  python -c \"import secrets; print(secrets.token_bytes(32).hex())\""
+            )
+        if strict_signing and len(private_key) < 32:
+            raise ValueError(
+                f"'private_key' debe tener al menos 32 bytes. "
+                f"Recibidos: {len(private_key)} bytes."
+            )
+
         self.r = redis_client
         self.private_key = private_key
+        self.strict_signing = strict_signing
         self.burn_rate = burn_rate
         self.prefix = key_prefix
         self.wal = TransactionWAL(wal_path)
@@ -136,8 +150,7 @@ class EscrowEngine:
         self._sha_refund = self.r.script_load(_LUA_REFUND)
         self._sha_settle = self.r.script_load(_LUA_SETTLE)
 
-        if not private_key:
-            logger.warning("EscrowEngine: private_key not set. Asymmetric signatures disabled.")
+        logger.info("EscrowEngine inicializado con firma Ed25519 activa.")
 
     def _resolve_burn_rate(self) -> float:
         """

@@ -49,14 +49,31 @@ def _get_machine_secret() -> str:
     os.chmod(str(secret_path), 0o600)
     return secret
 
+def _get_or_create_salt(storage_dir: Path) -> bytes:
+    """
+    Obtiene o genera un salt criptográfico único para esta instalación.
+    El salt se almacena junto a la clave cifrada y tiene permisos 600.
+    """
+    salt_path = storage_dir / ".key_salt"
+    if salt_path.exists():
+        return salt_path.read_bytes()
+
+    # Generar 32 bytes de entropía criptográfica
+    salt = os.urandom(32)
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    salt_path.write_bytes(salt)
+    os.chmod(str(salt_path), 0o600)
+    return salt
+
 # Derive a Fernet key from a passphrase (or machine-specific secret)
-def _derive_fernet_key(salt: bytes = b"kernell_os_sdk_v1") -> bytes:
+def _derive_fernet_key(storage_dir: Path) -> bytes:
     """
     Derives a Fernet encryption key from a machine-specific secret.
     Uses a highly secure, randomly generated machine secret.
     """
     machine_secret = _get_machine_secret()
-    raw = hashlib.pbkdf2_hmac("sha256", machine_secret.encode(), salt, 100_000, dklen=32)
+    salt = _get_or_create_salt(storage_dir)
+    raw = hashlib.pbkdf2_hmac("sha256", machine_secret.encode("utf-8"), salt, 200_000, dklen=32)
     return base64.urlsafe_b64encode(raw)
 
 
@@ -142,15 +159,15 @@ def _generate_keypair() -> Tuple[str, str]:
     return private_bytes.hex(), public_bytes.hex()
 
 
-def _encrypt_private_key(private_hex: str) -> bytes:
+def _encrypt_private_key(private_hex: str, storage_dir: Path) -> bytes:
     """Encrypt the private key using Fernet (AES) bound to this machine."""
-    fernet = Fernet(_derive_fernet_key())
+    fernet = Fernet(_derive_fernet_key(storage_dir))
     return fernet.encrypt(private_hex.encode())
 
 
-def _decrypt_private_key(encrypted_data: bytes) -> str:
+def _decrypt_private_key(encrypted_data: bytes, storage_dir: Path) -> str:
     """Decrypt the private key. Will FAIL if run on a different machine (different UDID)."""
-    fernet = Fernet(_derive_fernet_key())
+    fernet = Fernet(_derive_fernet_key(storage_dir))
     return fernet.decrypt(encrypted_data).decode()
 
 
@@ -217,7 +234,7 @@ def create_passport(
         os.chmod(str(sig_path), 0o600)
 
         # Encrypt private key at rest (bound to this machine's UDID)
-        encrypted_key = _encrypt_private_key(private_hex)
+        encrypted_key = _encrypt_private_key(private_hex, storage_dir)
         key_path = storage_dir / ".private_key.enc"
         key_path.write_bytes(encrypted_key)
         os.chmod(str(key_path), 0o600)
@@ -258,7 +275,7 @@ def load_passport(storage_dir: Path) -> Optional[AgentPassport]:
     key_path = storage_dir / ".private_key.enc"
     if sig_path.exists() and key_path.exists():
         try:
-            private_hex = _decrypt_private_key(key_path.read_bytes())
+            private_hex = _decrypt_private_key(key_path.read_bytes(), storage_dir)
             expected_hmac = _compute_passport_hmac(passport.to_json(), private_hex)
             actual_hmac = sig_path.read_text().strip()
             if not hmac_module.compare_digest(expected_hmac, actual_hmac):
@@ -289,13 +306,13 @@ def load_private_key(storage_dir: Path) -> Optional[str]:
     """Load and decrypt the private key from disk."""
     key_path = Path(storage_dir) / ".private_key.enc"
     if key_path.exists():
-        return _decrypt_private_key(key_path.read_bytes())
+        return _decrypt_private_key(key_path.read_bytes(), Path(storage_dir))
     # Legacy fallback: check for unencrypted key and migrate
     old_path = Path(storage_dir) / ".private_key"
     if old_path.exists():
         private_hex = old_path.read_text().strip()
         # Migrate to encrypted storage
-        encrypted = _encrypt_private_key(private_hex)
+        encrypted = _encrypt_private_key(private_hex, Path(storage_dir))
         key_path.write_bytes(encrypted)
         os.chmod(str(key_path), 0o600)
         old_path.unlink()  # Remove plaintext

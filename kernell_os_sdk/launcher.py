@@ -6,6 +6,34 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import subprocess
+from pathlib import Path
+
+def write_secure_env_file(env_vars: dict[str, str], path: str = ".env") -> Path:
+    import os
+    import stat
+    env_path = Path(path).resolve()
+    lines = [
+        "# Kernell OS SDK — Archivo de configuración seguro\n",
+        "# PERMISOS: 600 (solo lectura del owner)\n",
+        "# NO hacer commit de este archivo — verificar que esté en .gitignore\n\n",
+    ]
+    for key, value in env_vars.items():
+        safe_value = value.replace("\n", "\\n").replace('"', '\\"')
+        lines.append(f'{key}="{safe_value}"\n')
+    content = "".join(lines)
+    flags = os.O_CREAT | os.O_WRONLY | os.O_TRUNC
+    mode  = stat.S_IRUSR | stat.S_IWUSR   # 0o600
+    fd = os.open(str(env_path), flags, mode)
+    try:
+        os.write(fd, content.encode("utf-8"))
+    finally:
+        os.close(fd)
+    
+    gitignore = env_path.parent / ".gitignore"
+    if gitignore.exists():
+        if not any(pattern.strip() in (".env", "*.env", ".env*") for pattern in gitignore.read_text().splitlines()):
+            print("⚠️  ADVERTENCIA: '.env' no está en .gitignore.")
+    return env_path
 
 app = FastAPI(title="Kernell OS - Setup Wizard")
 
@@ -21,13 +49,39 @@ class SetupData(BaseModel):
 
 @app.get("/api/verify-star/{username}")
 def verify_github_star(username: str):
-    """Verifies if the user starred Greco-Italico/kernell-os."""
-    # En un entorno real haríamos un request a la API pública de GitHub:
-    # https://api.github.com/users/{username}/starred/Greco-Italico/kernell-os
-    # Para esta demo, simularemos la verificación exitosa si el nombre no está vacío
-    if not username:
-        raise HTTPException(status_code=400, detail="Username required")
-    return {"starred": True, "message": f"Verified! Thanks for supporting Open Source, {username}."}
+    """Verifica si el usuario realmente dio star al repositorio en GitHub."""
+    if not username or not username.strip():
+        raise HTTPException(status_code=400, detail="Username requerido")
+    # Validar que el username solo tiene caracteres válidos de GitHub
+    import re
+    if not re.match(r'^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$', username):
+        raise HTTPException(status_code=400, detail="Username de GitHub inválido")
+
+    REPO = "Greco-Italico/kernell-os-sdk"
+    url = f"https://api.github.com/users/{username}/starred/{REPO}"
+    try:
+        resp = httpx.get(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "kernell-os-sdk-installer",
+            },
+            timeout=8.0,
+            follow_redirects=False,
+        )
+        if resp.status_code == 204:
+            return {"starred": True, "message": f"¡Verificado! Gracias por el apoyo, {username}."}
+        elif resp.status_code == 404:
+            raise HTTPException(status_code=403, detail="Star no detectada. Por favor dale ⭐ al repositorio primero.")
+        elif resp.status_code == 401:
+            raise HTTPException(status_code=503, detail="Error de autenticación con GitHub API.")
+        else:
+            raise HTTPException(status_code=503, detail=f"GitHub API retornó {resp.status_code}. Intenta de nuevo.")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=503, detail="Timeout al verificar con GitHub. Revisa tu conexión.")
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=503, detail=f"No se pudo conectar a GitHub: {str(e)[:100]}")
 
 @app.get("/", response_class=HTMLResponse)
 def serve_wizard():
@@ -173,34 +227,63 @@ def serve_wizard():
     </html>
     """
 
+def _write_secret_file(path: str, content: str) -> None:
+    """Escribe un archivo con permisos 600 (solo el dueño puede leer/escribir)."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(content, encoding="utf-8")
+    os.chmod(str(p), 0o600)
+
 @app.post("/api/setup")
 def handle_setup(data: SetupData):
     import secrets
     
-    # Auto-generate Dual Wallet keys if Kernell Pay is enabled
-    private_key = ""
+    private_key_hex = ""
     public_address = ""
     volatile_address = ""
     
     if data.enable_kernell_pay:
-        private_key = secrets.token_hex(32)
+        private_key_hex = secrets.token_hex(32)
         public_address = "sol1_" + secrets.token_hex(16)
         volatile_address = "kv_" + secrets.token_hex(16)
         
-    # 1. Write .env
-    with open(".env", "w") as f:
-        f.write(f"ANTHROPIC_API_KEY={data.anthropic_key}\n")
-        f.write(f"OPENAI_API_KEY={data.openai_key}\n")
-        f.write(f"KERNELL_CLUSTER_NAME={data.swarm_name}_cluster\n")
-        f.write("REDIS_URL=redis://localhost:6379\n")
-        f.write(f"STRICT_SANDBOX={str(data.strict_sandbox).lower()}\n")
-        f.write(f"KERNELL_PAY_ENABLED={str(data.enable_kernell_pay).lower()}\n")
-        if data.enable_kernell_pay:
-            f.write(f"KERNELL_TX_PRIVATE_KEY={private_key}\n")
-            f.write(f"KERNELL_PUBLIC_ADDRESS={public_address}\n")
-            f.write(f"KERNELL_VOLATILE_ADDRESS={volatile_address}\n")
-        
-    # 2. Write main.py
+        # La clave privada va en archivo SEPARADO con permisos 600
+        _write_secret_file(
+            ".kernell/tx_private.key",
+            private_key_hex
+        )
+        print("\n" + "=" * 60)
+        print("  ⚠️  CLAVE PRIVADA GENERADA")
+        print(f"  Ubicación: .kernell/tx_private.key")
+        print("  NUNCA compartas este archivo.")
+        print("  NUNCA lo subas a Git (ya está en .gitignore)")
+        print("=" * 60 + "\n")
+
+    # .env sin información criptográfica sensible
+    env_content = f"""# Kernell OS SDK — Configuración generada automáticamente
+# NUNCA subir a control de versiones
+
+ANTHROPIC_API_KEY={data.anthropic_key}
+OPENAI_API_KEY={data.openai_key}
+KERNELL_CLUSTER_NAME={data.swarm_name}_cluster
+REDIS_URL=redis://localhost:6379
+STRICT_SANDBOX={str(data.strict_sandbox).lower()}
+KERNELL_PAY_ENABLED={str(data.enable_kernell_pay).lower()}
+KERNELL_PUBLIC_ADDRESS={public_address}
+KERNELL_VOLATILE_ADDRESS={volatile_address}
+# KERNELL_TX_PRIVATE_KEY — NO está aquí, ver: .kernell/tx_private.key
+"""
+    _write_secret_file(".env", env_content)
+    
+    # Asegurar que .gitignore excluye los secretos
+    gitignore_entries = "\n# Kernell OS SDK secrets\n.env\n.kernell/\n*.key\n"
+    gitignore_path = Path(".gitignore")
+    existing = gitignore_path.read_text() if gitignore_path.exists() else ""
+    if ".kernell/" not in existing:
+        with open(".gitignore", "a") as f:
+            f.write(gitignore_entries)
+            
+    # Generar y ejecutar main.py
     main_content = f"""import os
 from dotenv import load_dotenv
 from kernell_os_sdk import Agent, AgentPermissions
@@ -235,18 +318,27 @@ def main():
 if __name__ == "__main__":
     main()
 """
-    with open("main.py", "w") as f:
-        f.write(main_content)
+    _write_secret_file("main.py", main_content)
         
     subprocess.Popen([sys.executable, "main.py"])
     return {"status": "success"}
 
 def run_launcher():
+    """Inicia el wizard de configuración SOLO en localhost."""
     if not os.path.exists(".env") or not os.path.exists("main.py"):
-        print("Initial boot detected. Starting Web Setup Wizard on port 3000...")
-        uvicorn.run(app, host="0.0.0.0", port=3000, log_level="warning")
+        print("=" * 60)
+        print("  KERNELL OS — WEB SETUP WIZARD")
+        print("  ⚠️  Accesible SOLO desde esta máquina (localhost)")
+        print("  🌐  Abre: http://localhost:3000")
+        print("=" * 60)
+        uvicorn.run(
+            app,
+            host="127.0.0.1",   # ← CRÍTICO: nunca 0.0.0.0
+            port=3000,
+            log_level="warning"
+        )
     else:
-        print("Configuration found. Booting Agent Swarm directly...")
+        print("Configuración encontrada. Iniciando swarm directamente...")
         subprocess.run([sys.executable, "main.py"], check=True)
 
 if __name__ == "__main__":

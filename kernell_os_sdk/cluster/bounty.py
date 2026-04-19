@@ -128,22 +128,38 @@ class BountyBoard:
                     return False
 
     def submit_result(self, bounty_id: str, claimer_node_id: str, result: str) -> bool:
-        """Submits the result of a claimed bounty."""
+        """Submits the result of a claimed bounty (atomic con WATCH/MULTI/EXEC)."""
         key = f"{self._prefix}:{bounty_id}"
-        data = self.r.get(key)
-        
-        if not data:
-            return False
-            
-        bounty_dict = json.loads(data)
-        if bounty_dict.get("status") != "claimed" or bounty_dict.get("claimed_by_node_id") != claimer_node_id:
-            return False
-            
-        bounty_dict["status"] = "completed"
-        bounty_dict["result"] = result
-        
-        self.r.set(key, json.dumps(bounty_dict))
-        
-        # In a full implementation, this is where the Escrow release would trigger
-        logger.info(f"Node {claimer_node_id} completed bounty {bounty_id}")
-        return True
+
+        with self.r.pipeline() as pipe:
+            while True:
+                try:
+                    pipe.watch(key)
+                    data = pipe.get(key)
+
+                    if not data:
+                        pipe.unwatch()
+                        return False
+
+                    bounty_dict = json.loads(data)
+                    if (bounty_dict.get("status") != "claimed" or
+                            bounty_dict.get("claimed_by_node_id") != claimer_node_id):
+                        pipe.unwatch()
+                        return False
+
+                    bounty_dict["status"] = "completed"
+                    bounty_dict["result"] = result[:50_000]  # Límite de tamaño del resultado
+
+                    pipe.multi()
+                    pipe.set(key, json.dumps(bounty_dict), keepttl=True)
+                    pipe.execute()
+
+                    logger.info(f"Node {claimer_node_id} completed bounty {bounty_id}")
+                    return True
+
+                except redis.WatchError:
+                    continue  # Retry si otro cliente modificó la key
+                except Exception as e:
+                    logger.error(f"Error submitting result for bounty {bounty_id}: {e}")
+                    pipe.unwatch()
+                    return False
