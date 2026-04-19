@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Greco-Italico/kernell-os-sdk/main/logo.png" alt="Kernell OS Logo" width="300" />
+</p>
+
 # Kernell OS SDK
 
 ![PyPI version](https://badge.fury.io/py/kernell-os-sdk.svg)
