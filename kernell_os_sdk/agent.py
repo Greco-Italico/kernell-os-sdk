@@ -15,6 +15,8 @@ from .identity import (
     load_private_key, SecurityError
 )
 from .sandbox import Sandbox, ResourceLimits, AgentPermissions
+from .budget import TokenBudget
+from .health import SLOMonitor
 
 logger = logging.getLogger("kernell.agent")
 
@@ -99,6 +101,10 @@ class Agent:
         self._skills: Dict[str, Callable] = {}
         self._skill_schemas: List[Dict[str, Any]] = []
         self.state = AgentState()
+
+        # Observability
+        self.budget = TokenBudget(agent_name=self.name)
+        self.slo = SLOMonitor(agent_name=self.name)
 
         # Register default Computer Use skills if enabled
         if self.permissions.gui_automation or self.permissions.execute_commands:

@@ -1,6 +1,6 @@
-"""Kernell OS SDK — Open-Source Agent Framework v0.4.0"""
+"""Kernell OS SDK — Open-Source Agent Framework v0.5.0"""
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 __author__ = "Kernell OS"
 
 from kernell_os_sdk.agent import Agent
@@ -17,14 +17,19 @@ from kernell_os_sdk.resilience import CircuitBreaker, CircuitOpenError
 from kernell_os_sdk.tracing import TraceContext, get_current_trace_id
 from kernell_os_sdk.health import SLOMonitor, HealthStatus
 from kernell_os_sdk.skill_loader import SkillLoader, SkillConfig
+from kernell_os_sdk.token_estimator import estimate_tokens
+from kernell_os_sdk.persister import ToolResultPersister
+from kernell_os_sdk.dashboard import CommandCenter
 
 __all__ = [
     "Agent", "Memory", "Cluster", "Wallet", "KernellConfig",
-    "ResourceLimits", "AgentPermissions", "AgentPassport", "AgentGUI",
+    "ResourceLimits", "AgentPermissions", "AgentPassport",
+    "AgentGUI", "CommandCenter",
     "HardwareFingerprint", "SecurityError",
     "TokenBudget", "CircuitBreaker", "CircuitOpenError",
     "TraceContext", "get_current_trace_id",
     "SLOMonitor", "HealthStatus",
     "SkillLoader", "SkillConfig",
+    "estimate_tokens", "ToolResultPersister",
     "__version__",
 ]
