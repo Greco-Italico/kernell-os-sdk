@@ -1,98 +1,136 @@
 # Kernell OS SDK
 
-<div align="center">
-  <img src="https://kernell.site/logo.png" alt="Kernell OS" width="200"/>
-  <h3>The Open-Source Framework for the M2M Economy</h3>
-</div>
+![PyPI version](https://badge.fury.io/py/kernell-os-sdk.svg)
+![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)
+![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-**Kernell OS SDK** is the ultimate toolkit for building autonomous agents. It goes beyond simple orchestration (like Claude Managed Agents) by treating agents as **autonomous economic entities**.
+**Kernell OS SDK** is a production-grade, security-first framework for building autonomous AI agents that can interact with the machine, participate in M2M (Machine-to-Machine) commerce, and operate securely within isolated environments.
 
-## 🚀 Why Kernell OS SDK? (vs. Claude Managed Agents)
+## Features
 
-| Feature | Claude Managed Agents | Kernell OS SDK |
-| :--- | :--- | :--- |
-| **Orchestration** | Static Orchestrator-Subagent | **Dynamic Swarms**. Agents bid and collaborate. |
-| **Economy** | None. You pay Anthropic. | **M2M Commerce ($KERN)**. Agents earn and spend money. |
-| **Token Usage** | Extremely high (massive context windows). | **Advanced RAG & Sectorization**. Tasks are routed by difficulty, and memory is condensed to save tokens. |
-| **Execution** | Black-box sandbox. | **Zero-Trust Open Source**. Local Docker execution with granular GUI permissions. |
-| **Security Binding** | Cloud accounts. | **Hardware UDID Telemetry**. Passports are cryptographically bound to the host machine's MAC/IP to prevent cloning. |
+- **🛡️ Secure By Default**: Hardened sandbox execution, cryptographic identities bound to hardware UDID, and strict permission boundaries (anti-RCE).
+- **💸 Built-in M2M Commerce**: Native integration with the Kernell Agent Protocol (KAP) and `$KERN` token for task payments and escrow.
+- **🧠 Cortex Shared Memory**: Offloads context to Redis for massive token savings using episodic memory streams.
+- **📈 Command Center**: A beautiful, real-time local dashboard to monitor metrics, toggle permissions, and manage API keys safely.
+- **🔋 Production Resilience**: Includes Token Budgeting, Circuit Breakers, SLO Monitoring, and Tool Output Persistence out of the box.
 
-## 📦 Installation
+## Installation
 
 ```bash
+# Core SDK
 pip install kernell-os-sdk
+
+# With Dashboard / GUI support
+pip install kernell-os-sdk[gui]
+
+# With Redis memory support
+pip install kernell-os-sdk[memory]
+
+# Everything
+pip install kernell-os-sdk[all]
 ```
 
-*(Optional dependencies available for `memory`, `llm`, `cluster`, or `all`)*.
+## Quick Start
 
-## 🛠️ Quick Start
-
-Create an agent that can execute skills and manage its own memory:
+### 1. Create a Secure Agent
 
 ```python
-from kernell_os_sdk import Agent
+from kernell_os_sdk import Agent, AgentPermissions
 
+# Create an agent with specific permissions
 agent = Agent(
-    name="DataScraper",
-    description="I scrape websites and extract structured data.",
-    rate_kern_per_task=0.05
+    name="Data Analyst",
+    permissions=AgentPermissions(
+        network_access=True,
+        file_system_read=True,
+        execute_commands=False  # Secure by default
+    )
 )
 
-@agent.skill("scrape")
-def scrape_url(url: str) -> dict:
-    """Scrapes a URL and returns the content."""
-    return {"content": "..."}
-
-# Start listening for tasks on the Kernell Network
+# Start the agent daemon
 agent.run()
 ```
 
-## 🌌 Cluster Orchestration
+### 2. Launch the Command Center
 
-Build a "War Room" of specialized agents working together:
-
-```python
-from kernell_os_sdk import Cluster, Agent
-
-audit_cluster = Cluster(name="SecurityTeam")
-
-# Add specialized agents
-audit_cluster.add_agent(Agent(name="StaticAnalyzer", rate_kern_per_task=0.1), role="Syntax Checker")
-audit_cluster.add_agent(Agent(name="RedTeamer", rate_kern_per_task=0.5), role="Vulnerability Finder")
-
-# Execute a complex task with a strict budget
-report = audit_cluster.run(task="Audit repository X", max_budget_kern=5.0)
-print(report["synthesis"])
-```
-
-## 🧠 Cortex Shared Memory
-
-Stop sending 50,000 tokens of chat history on every request. Kernell OS uses Cortex memory to compress and retrieve state automatically:
+Monitor your agent, toggle permissions in real-time, and manage API keys without restarting:
 
 ```python
-from kernell_os_sdk import Memory
+from kernell_os_sdk import CommandCenter
 
-mem = Memory(agent_id="my_agent")
+# Attach dashboard to your agent
+dashboard = CommandCenter(agent, port=8500)
+dashboard.start()
 
-# The SDK automatically handles stateful offloading
-summary = mem.summarize_context(max_tokens=300)
+# Dashboard available at http://127.0.0.1:8500
 ```
 
-## 💻 CLI
+### 3. Add Custom Skills (Tools)
 
-The SDK includes a built-in CLI for easy management:
+Easily extend your agent with type-hinted skills. API keys are safely retrieved from the Command Center at runtime.
+
+```python
+import httpx
+
+@agent.skill(description="Fetch the weather for a city.")
+def get_weather(city: str) -> str:
+    # Safely get API key added via the Dashboard
+    api_key = dashboard.get_api_key("weather_api")
+    if not api_key:
+        return "Error: Weather API key not configured."
+        
+    response = httpx.get(f"https://api.weather.com/v1/{city}?key={api_key}")
+    return response.text
+```
+
+## Advanced Features
+
+### Token Budgeting & Circuit Breakers
+Protect your API credits and prevent cascading failures:
+
+```python
+# Agent has built-in budget tracking
+if agent.budget.can_spend(estimated_tokens=500):
+    # Safe to call LLM
+    pass
+else:
+    print(f"Budget exhausted! Throttled: {agent.budget.snapshot().throttle_reason}")
+```
+
+### M2M Commerce ($KERN)
+Pay other agents or receive payments for completed tasks:
+
+```python
+from kernell_os_sdk import Wallet
+
+with Wallet() as wallet:
+    balance = wallet.get_balance()
+    print(f"Current Balance: {balance} KERN")
+    
+    # Hold funds in escrow
+    escrow_id = wallet.request_payment_escrow(amount=5.0, task_id="analyze_data", payer_id="agent_123")
+    
+    # Release on success
+    wallet.release_escrow(escrow_id)
+```
+
+## Security Posture
+
+Kernell OS SDK is designed for zero-trust environments:
+- **Private Keys**: Encrypted at rest using AES-128-CBC and bound to the machine's hardware UDID. Passports cannot be cloned.
+- **Sandboxing**: Containerized execution drops all Linux capabilities, prevents root mounting, and enforces disk quotas.
+- **Command Execution**: No `shell=True`. Commands are strictly sanitized against a blacklist of destructive operations (`rm -rf`, `mkfs`, etc.).
+- **Audit Logging**: All permission changes and API key accesses are logged immutably in the dashboard.
+
+## Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on submitting pull requests, writing tests, and clean code standards.
 
 ```bash
-# Initialize a new agent
-kernell init my_agent
-
-# Check your agent's wallet balance
-kernell wallet --balance
-
-# Run your agent daemon
-kernell run my_agent.py
+# Run tests
+pytest tests/ -v
 ```
 
 ## License
 
-MIT License. See `LICENSE` for details.
+MIT License. See [LICENSE](LICENSE) for details.

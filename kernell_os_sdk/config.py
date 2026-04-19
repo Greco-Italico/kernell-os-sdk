@@ -8,11 +8,14 @@ SECURITY:
 """
 import os
 from typing import Optional
-from pydantic import BaseModel, Field, model_serializer
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class KernellConfig(BaseModel):
     """Configuration for the Kernell OS SDK."""
+
+    model_config = ConfigDict(env_prefix="KERNELL_")
+
     api_key: str = Field(default_factory=lambda: os.getenv("KERNELL_API_KEY", ""))
     gateway_url: str = Field(default_factory=lambda: os.getenv("KERNELL_GATEWAY_URL", "https://api.kernell.site"))
     redis_url: Optional[str] = Field(default_factory=lambda: os.getenv("KERNELL_REDIS_URL", None))
@@ -20,7 +23,7 @@ class KernellConfig(BaseModel):
 
     # Wallet / Escrow configuration
     wallet_address: Optional[str] = Field(default_factory=lambda: os.getenv("KERNELL_WALLET_ADDRESS", None))
-    # SECURITY: This field is EXCLUDED from serialization (see model_serializer)
+    # SECURITY: This field is EXCLUDED from serialization
     wallet_private_key: Optional[str] = Field(
         default_factory=lambda: os.getenv("KERNELL_WALLET_KEY", None),
         exclude=True,  # Never serialize this field
@@ -29,9 +32,6 @@ class KernellConfig(BaseModel):
     # LLM Defaults
     default_model: str = Field(default="claude-3-5-sonnet-20241022")
     fallback_model: str = Field(default="gpt-4o-mini")
-
-    class Config:
-        env_prefix = "KERNELL_"
 
     def model_dump(self, **kwargs):
         """Override to always exclude sensitive fields."""
