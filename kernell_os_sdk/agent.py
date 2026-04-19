@@ -1,6 +1,7 @@
 import inspect
 import json
 import logging
+import shlex
 import uuid
 from typing import Callable, Dict, Any, List, Optional
 from pathlib import Path
@@ -9,21 +10,45 @@ from pydantic import BaseModel
 from .config import default_config, KernellConfig
 from .memory import Memory
 from .wallet import Wallet
-from .identity import AgentPassport, create_passport, load_passport
+from .identity import (
+    AgentPassport, create_passport, load_passport,
+    load_private_key, SecurityError
+)
 from .sandbox import Sandbox, ResourceLimits, AgentPermissions
 
 logger = logging.getLogger("kernell.agent")
+
+# Commands that are NEVER allowed regardless of permissions
+COMMAND_BLACKLIST = {
+    "rm -rf /", "rm -rf /*", "mkfs", "dd if=", ":(){:|:&};:",
+    "chmod -R 777 /", "shutdown", "reboot", "halt", "poweroff",
+    "cat /etc/shadow", "passwd", "userdel", "useradd",
+}
+
+# Valid permission attribute names
+VALID_PERMISSIONS = {
+    "network_access", "file_system_read", "file_system_write",
+    "execute_commands", "browser_control", "gui_automation"
+}
+
 
 class AgentState(BaseModel):
     status: str = "idle"
     tasks_completed: int = 0
     kern_earned: float = 0.0
 
+
 class Agent:
     """
     The Core Kernell PC Agent.
     Autonomous entity capable of executing tasks, using memory,
     participating in the $KERN M2M economy, and controlling the PC.
+
+    Security features:
+      - Shell injection prevention (no shell=True)
+      - Command blacklisting
+      - Permission name whitelisting
+      - UDID-bound passport with encrypted private key
     """
     def __init__(
         self,
@@ -41,36 +66,56 @@ class Agent:
         self.system_prompt = system_prompt
         self.rate = rate_kern_per_task
         self.config = config or default_config
-        
+
         # Identity & Passport
         self.storage_path = Path(storage_dir).expanduser() / name.lower().replace(" ", "_")
-        self.passport = load_passport(self.storage_path)
+
+        try:
+            self.passport = load_passport(self.storage_path)
+        except SecurityError as e:
+            logger.critical(f"SECURITY VIOLATION: {e}")
+            raise
+
         if not self.passport:
             logger.info(f"Creating new cryptographic passport for {name}...")
             self.passport, self._private_key = create_passport(name, storage_dir=self.storage_path)
-        
+        else:
+            # Load the encrypted private key
+            self._private_key = load_private_key(self.storage_path)
+            if not self._private_key:
+                logger.warning(f"Private key not found for {name}. Agent cannot sign messages.")
+
         self.id = self.passport.agent_id
-        
+
         # Core Modules
         self.memory = Memory(agent_id=self.id, config=self.config)
         self.wallet = Wallet(config=self.config)
-        
+
         # PC Container & Permissions
         self.limits = limits or ResourceLimits()
         self.permissions = permissions or AgentPermissions()
         self.sandbox = Sandbox(self.id, self.limits, self.permissions)
-        
+
         self._skills: Dict[str, Callable] = {}
         self._skill_schemas: List[Dict[str, Any]] = []
         self.state = AgentState()
-        
+
         # Register default Computer Use skills if enabled
         if self.permissions.gui_automation or self.permissions.execute_commands:
             self._register_computer_use_skills()
-        
+
         logger.info(f"Initialized Agent '{self.name}'")
         logger.info(f"Passport ID: {self.id} | KAP: {self.passport.kap_address}")
         logger.info(f"Dual Wallet | Volatile: {self.passport.kern_volatile_address} | SOL: {self.passport.kern_solana_address or 'Pending Bridge'}")
+
+    def _is_command_safe(self, command: str) -> bool:
+        """Check command against the blacklist."""
+        cmd_lower = command.lower().strip()
+        for blocked in COMMAND_BLACKLIST:
+            if blocked in cmd_lower:
+                logger.warning(f"[SECURITY] Blocked dangerous command: {command[:50]}...")
+                return False
+        return True
 
     def _register_computer_use_skills(self):
         """Registers native PC control skills (Computer Use)."""
@@ -78,9 +123,28 @@ class Agent:
         def execute_bash(command: str) -> str:
             if not self.permissions.execute_commands:
                 return "Error: Command execution permission is disabled."
+
+            # Security: blacklist check
+            if not self._is_command_safe(command):
+                return "Error: This command is blocked for security reasons."
+
             import subprocess
-            res = subprocess.run(command, shell=True, capture_output=True, text=True)
-            return res.stdout if res.returncode == 0 else res.stderr
+            try:
+                # SECURITY FIX: shell=False with shlex.split prevents injection
+                args = shlex.split(command)
+                res = subprocess.run(
+                    args,
+                    shell=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,  # Prevent infinite hangs
+                    cwd=str(Path.home())  # Safe working directory
+                )
+                return res.stdout if res.returncode == 0 else f"Error (exit {res.returncode}): {res.stderr}"
+            except subprocess.TimeoutExpired:
+                return "Error: Command timed out after 30 seconds."
+            except Exception as e:
+                return f"Error: {str(e)}"
 
         @self.skill("mouse_click", "Click a specific coordinate on the screen.")
         def mouse_click(x: int, y: int) -> str:
@@ -93,21 +157,21 @@ class Agent:
         def decorator(func: Callable):
             skill_name = name or func.__name__
             skill_desc = description or func.__doc__ or f"Execute {skill_name}"
-            
+
             sig = inspect.signature(func)
             props = {}
             required = []
-            
+
             for param_name, param in sig.parameters.items():
                 param_type = "string"
                 if param.annotation == int: param_type = "integer"
                 elif param.annotation == float: param_type = "number"
                 elif param.annotation == bool: param_type = "boolean"
-                
+
                 props[param_name] = {"type": param_type}
                 if param.default == inspect.Parameter.empty:
                     required.append(param_name)
-                    
+
             schema = {
                 "name": skill_name,
                 "description": skill_desc,
@@ -117,7 +181,7 @@ class Agent:
                     "required": required
                 }
             }
-            
+
             self._skills[skill_name] = func
             self._skill_schemas.append(schema)
             return func
@@ -125,10 +189,14 @@ class Agent:
 
     def toggle_permission(self, permission: str, state: bool):
         """Runtime switch to turn permissions ON/OFF dynamically via GUI."""
+        # SECURITY: Whitelist-only permission names
+        if permission not in VALID_PERMISSIONS:
+            logger.error(f"[SECURITY] Rejected invalid permission name: {permission}")
+            return
+
         if hasattr(self.permissions, permission):
             setattr(self.permissions, permission, state)
-            logger.info(f"Permission '{permission}' set to {state}")
-            # In a full implementation, this triggers a dynamic Docker update or proxy rule
+            logger.info(f"[AUDIT] Permission '{permission}' set to {state}")
         else:
             logger.error(f"Unknown permission: {permission}")
 
@@ -145,25 +213,25 @@ class Agent:
     def prompt(self, task: str) -> str:
         """Executes a task with Advanced RAG and Task Sectorization."""
         self.state.status = "working"
-        
+
         if not self.permissions.network_access:
             logger.warning("Network access disabled. Agent is running in offline local LLM mode.")
-        
+
         # Task Sectorization: Route by difficulty to save tokens
         difficulty = self._estimate_difficulty(task)
         logger.info(f"Task Sectorization: '{task[:20]}...' classified as {difficulty.upper()} difficulty.")
-        
+
         # Advanced RAG: Condense context instead of appending everything
         context = self.memory.summarize_context(max_tokens=300)
         self.memory.add_episodic("task_started", {"task": task, "difficulty": difficulty})
-        
+
         # TODO: Route to appropriate model based on 'difficulty'
         response = f"[Execution output for '{task}'. Model: {difficulty}_tier. Skills: {list(self._skills.keys())}]"
-        
+
         self.state.tasks_completed += 1
         self.state.status = "idle"
         self.memory.add_episodic("task_completed", {"task": task, "status": "success"})
-        
+
         return response
 
     def install(self):
@@ -173,3 +241,10 @@ class Agent:
     def run(self):
         """Starts the agent daemon."""
         logger.info(f"Agent {self.name} is live.")
+
+    def shutdown(self):
+        """Graceful shutdown: stop sandbox, close wallet, flush memory."""
+        logger.info(f"Shutting down agent {self.name}...")
+        self.sandbox.stop()
+        self.wallet.close()
+        logger.info(f"Agent {self.name} stopped.")
