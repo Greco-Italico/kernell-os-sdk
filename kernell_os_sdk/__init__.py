@@ -5,7 +5,7 @@ __author__ = "Kernell OS"
 
 from kernell_os_sdk.agent import Agent
 from kernell_os_sdk.memory import Memory
-from kernell_os_sdk.cluster import ClusterNode, ClusterDiscovery, BountyBoard, Bounty
+from kernell_os_sdk.cluster import ClusterNode, ClusterDiscovery, BountyBoard, Bounty, MemorySync
 from kernell_os_sdk.wallet import Wallet
 from kernell_os_sdk.config import KernellConfig
 from kernell_os_sdk.sandbox import ResourceLimits, AgentPermissions
@@ -26,7 +26,7 @@ from kernell_os_sdk.llm import (
 from kernell_os_sdk.delegation import SubAgentManager, TaskQueue
 
 __all__ = [
-    "Agent", "Memory", "ClusterNode", "ClusterDiscovery", "BountyBoard", "Bounty", 
+    "Agent", "Memory", "ClusterNode", "ClusterDiscovery", "BountyBoard", "Bounty", "MemorySync",
     "Wallet", "KernellConfig",
     "ResourceLimits", "AgentPermissions", "AgentPassport",
     "AgentGUI", "CommandCenter",

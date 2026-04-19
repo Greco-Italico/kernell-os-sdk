@@ -12,10 +12,12 @@ Exports:
 """
 from .discovery import ClusterDiscovery, ClusterNode
 from .bounty import BountyBoard, Bounty
+from .sync import MemorySync
 
 __all__ = [
     "ClusterNode",
     "ClusterDiscovery",
     "BountyBoard",
     "Bounty",
+    "MemorySync",
 ]
