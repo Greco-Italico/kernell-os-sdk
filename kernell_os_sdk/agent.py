@@ -20,6 +20,8 @@ from .health import SLOMonitor
 from .constants import VALID_PERMISSIONS
 from .llm import BaseLLMProvider, LLMMessage
 from .policy_engine import PolicyEngine, AgentCapabilities
+from .risk_engine import RiskEngine, ExecutionContext, ActionTag, DataSensitivity
+from .execution_gate import ExecutionGate
 
 logger = structlog.get_logger("kernell.agent")
 
@@ -99,6 +101,11 @@ class Agent:
         self.capabilities = capabilities or AgentCapabilities()
         self.policy = PolicyEngine(self.capabilities)
 
+        # Multi-Layer Execution Authority (Paranoid Mode)
+        self.execution_context = ExecutionContext()
+        self.risk_engine = RiskEngine()
+        self.execution_gate = ExecutionGate(required_signatures=2, timelock_seconds=30)
+
         # Observability
         self.budget = TokenBudget(agent_name=self.name)
         self.slo = SLOMonitor(agent_name=self.name)
@@ -144,6 +151,11 @@ class Agent:
                 )
                 return f"Error: [POLICY] {result.reason}"
 
+            # Multi-Layer Execution Authority
+            risk = self.risk_engine.evaluate(command, self.execution_context)
+            if not self.execution_gate.approve(command, risk):
+                return f"Error: [EXECUTION_GATE] CRITICAL action '{command}' denied. Missing Multi-Sig or Oracle approval."
+
             import subprocess
             try:
                 container = self.sandbox.container_name
@@ -157,6 +169,19 @@ class Agent:
                 )
                 # Enforce output size cap (anti-exfiltration)
                 stdout = res.stdout[:self.capabilities.max_output_bytes]
+                
+                # Context Tagging (Taint Tracking)
+                sensitivity = DataSensitivity.PUBLIC
+                if "cat " in command or "grep " in command:
+                    sensitivity = DataSensitivity.INTERNAL
+                
+                self.execution_context.record_action(ActionTag(
+                    command=command,
+                    timestamp=time.time(),
+                    bytes_processed=len(stdout),
+                    sensitivity=sensitivity
+                ))
+                
                 if res.returncode == 0:
                     return stdout
                 return f"Error (exit {res.returncode}): {res.stderr[:2000]}"
