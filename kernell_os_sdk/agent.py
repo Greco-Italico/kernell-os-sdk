@@ -17,21 +17,9 @@ from .identity import (
 from .sandbox import Sandbox, ResourceLimits, AgentPermissions
 from .budget import TokenBudget
 from .health import SLOMonitor
+from .constants import VALID_PERMISSIONS, COMMAND_BLACKLIST
 
 logger = logging.getLogger("kernell.agent")
-
-# Commands that are NEVER allowed regardless of permissions
-COMMAND_BLACKLIST = {
-    "rm -rf /", "rm -rf /*", "mkfs", "dd if=", ":(){:|:&};:",
-    "chmod -R 777 /", "shutdown", "reboot", "halt", "poweroff",
-    "cat /etc/shadow", "passwd", "userdel", "useradd",
-}
-
-# Valid permission attribute names
-VALID_PERMISSIONS = {
-    "network_access", "file_system_read", "file_system_write",
-    "execute_commands", "browser_control", "gui_automation"
-}
 
 
 class AgentState(BaseModel):
