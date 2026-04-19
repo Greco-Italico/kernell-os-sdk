@@ -84,11 +84,14 @@ class Sandbox:
         self.container_name = f"kernell_agent_{self.agent_id}"
 
     def _build_docker_args(self) -> List[str]:
+        args = [
             "docker", "run", "-d",
             "--name", self.container_name,
             "--runtime", self.limits.runtime,
             "--memory", f"{self.limits.ram_mb}m",
+            "--memory-swap", f"{self.limits.ram_mb}m",  # No swap — prevent OOM abuse
             "--cpus", str(self.limits.cpu_cores),
+            "--pids-limit", "64",  # Prevent fork bombs
             # Disk quota enforcement
             "--storage-opt", f"size={self.limits.disk_gb}g",
             # Security hardening

@@ -19,6 +19,7 @@ from .budget import TokenBudget
 from .health import SLOMonitor
 from .constants import VALID_PERMISSIONS
 from .llm import BaseLLMProvider, LLMMessage
+from .policy_engine import PolicyEngine, AgentCapabilities
 
 logger = structlog.get_logger("kernell.agent")
 
@@ -50,6 +51,7 @@ class Agent:
         storage_dir: str = "~/.kernell/agents",
         limits: Optional[ResourceLimits] = None,
         permissions: Optional[AgentPermissions] = None,
+        capabilities: Optional[AgentCapabilities] = None,
         config: Optional[KernellConfig] = None,
         engine: Optional['BaseLLMProvider'] = None,  # Support for custom LLM engines
     ):
@@ -93,6 +95,10 @@ class Agent:
         self._skill_schemas: List[Dict[str, Any]] = []
         self.state = AgentState()
 
+        # Policy Engine (capability-based security boundary)
+        self.capabilities = capabilities or AgentCapabilities()
+        self.policy = PolicyEngine(self.capabilities)
+
         # Observability
         self.budget = TokenBudget(agent_name=self.name)
         self.slo = SLOMonitor(agent_name=self.name)
@@ -106,46 +112,20 @@ class Agent:
 
     def _is_command_safe(self, command: str) -> bool:
         """
-        Whitelist-based command validation.
-        MUCHO más seguro que una blacklist (que siempre puede bypassearse).
+        Capability-based command validation via the formal PolicyEngine.
+
+        This is the security boundary between the LLM planner and system execution.
+        All commands, arguments, network egress, filesystem access, and code
+        semantics are validated against the agent's AgentCapabilities manifest.
         """
-        if not command or not command.strip():
-            return False
-        if len(command) > 1024:
-            logger.warning("security_command_too_long", length=len(command), command=command[:50])
-            return False
-
-        from .constants import COMMAND_SAFELIST
-        try:
-            parts = shlex.split(command)
-        except ValueError as e:
-            logger.warning("security_command_parse_error", error=str(e), command=command[:50])
-            return False
-
-        if not parts:
-            return False
-
-        # Extraer el comando base (sin path: 'cat' de '/usr/bin/cat')
-        base_cmd = parts[0].split("/")[-1].split("\\")[-1]
-
-        if base_cmd not in COMMAND_SAFELIST:
-            logger.warning("security_command_not_in_whitelist", command_base=base_cmd)
-            return False
-
-        # Validar argumentos si la configuración lo exige
-        allowed_config = COMMAND_SAFELIST[base_cmd]
-        allowed_args = allowed_config.get("args")
-
-        if allowed_args is not None:
-            # Check all arguments starting with '-'
-            for arg in parts[1:]:
-                if arg.startswith('-') and arg not in allowed_args:
-                    # Allow combined short args (e.g. -la)
-                    if not all(f"-{c}" in allowed_args for c in arg[1:]):
-                        logger.warning("security_argument_not_allowed", command_base=base_cmd, argument=arg)
-                        return False
-
-        return True
+        result = self.policy.validate(command)
+        if not result.allowed:
+            logger.warning(
+                "policy_engine_denied",
+                command=command[:80],
+                reason=result.reason,
+            )
+        return result.allowed
 
     def _register_computer_use_skills(self):
         """Registers native PC control skills (Computer Use)."""
@@ -154,27 +134,34 @@ class Agent:
             if not self.permissions.execute_commands:
                 return "Error: permiso 'execute_commands' está deshabilitado."
 
-            # ← FIX: La llamada que faltaba
-            if not self._is_command_safe(command):
-                return "Error: [SECURITY] Comando bloqueado por política de seguridad."
+            # PolicyEngine validates command, args, network, filesystem, and semantics
+            result = self.policy.validate(command)
+            if not result.allowed:
+                logger.warning(
+                    "execute_bash_denied",
+                    command=command[:80],
+                    reason=result.reason,
+                )
+                return f"Error: [POLICY] {result.reason}"
 
             import subprocess
             try:
                 container = self.sandbox.container_name
-                # Usar '--' para separar opciones de docker del comando
                 args = ["docker", "exec", "--", container] + shlex.split(command)
                 res = subprocess.run(
                     args,
                     shell=False,
                     capture_output=True,
                     text=True,
-                    timeout=30,
+                    timeout=self.capabilities.max_cpu_seconds,
                 )
+                # Enforce output size cap (anti-exfiltration)
+                stdout = res.stdout[:self.capabilities.max_output_bytes]
                 if res.returncode == 0:
-                    return res.stdout[:10_000]  # Límite de output
+                    return stdout
                 return f"Error (exit {res.returncode}): {res.stderr[:2000]}"
             except subprocess.TimeoutExpired:
-                return "Error: Comando expiró después de 30 segundos."
+                return f"Error: Comando expiró después de {self.capabilities.max_cpu_seconds} segundos."
             except Exception as e:
                 return f"Error inesperado: {str(e)[:500]}"
 
