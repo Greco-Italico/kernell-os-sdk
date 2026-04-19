@@ -162,8 +162,13 @@ class Agent:
 
             # Multi-Layer Execution Authority
             risk = self.risk_engine.evaluate(command, self.execution_context)
+
+            # Cross-Layer Consistency Check (catches desync edge cases)
+            if not self.risk_engine.cross_layer_verify(result.allowed, risk, command):
+                return f"Error: [CROSS_LAYER] Risk override blocked '{command[:40]}' despite policy approval."
+
             if not self.execution_gate.approve(command, risk):
-                return f"Error: [EXECUTION_GATE] CRITICAL action '{command}' denied. Missing Multi-Sig or Oracle approval."
+                return f"Error: [EXECUTION_GATE] CRITICAL action denied. Missing Multi-Sig or Oracle approval."
 
             import subprocess
             try:
