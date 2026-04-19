@@ -57,6 +57,7 @@ class ResourceLimits(BaseModel):
     ram_mb: int = Field(default=2048, ge=256, le=65536)
     cpu_cores: float = Field(default=1.0, ge=0.25, le=32.0)
     disk_gb: int = Field(default=10, ge=1, le=500)
+    runtime: str = Field(default="runsc", description="Container runtime (e.g., 'runsc' for gVisor or 'runc')")
 
 
 class AgentPermissions(BaseModel):
@@ -83,9 +84,9 @@ class Sandbox:
         self.container_name = f"kernell_agent_{self.agent_id}"
 
     def _build_docker_args(self) -> List[str]:
-        args = [
             "docker", "run", "-d",
             "--name", self.container_name,
+            "--runtime", self.limits.runtime,
             "--memory", f"{self.limits.ram_mb}m",
             "--cpus", str(self.limits.cpu_cores),
             # Disk quota enforcement

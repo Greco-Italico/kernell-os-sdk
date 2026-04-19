@@ -132,6 +132,19 @@ class Agent:
             logger.warning("security_command_not_in_whitelist", command_base=base_cmd)
             return False
 
+        # Validar argumentos si la configuración lo exige
+        allowed_config = COMMAND_SAFELIST[base_cmd]
+        allowed_args = allowed_config.get("args")
+
+        if allowed_args is not None:
+            # Check all arguments starting with '-'
+            for arg in parts[1:]:
+                if arg.startswith('-') and arg not in allowed_args:
+                    # Allow combined short args (e.g. -la)
+                    if not all(f"-{c}" in allowed_args for c in arg[1:]):
+                        logger.warning("security_argument_not_allowed", command_base=base_cmd, argument=arg)
+                        return False
+
         return True
 
     def _register_computer_use_skills(self):

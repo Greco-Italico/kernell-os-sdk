@@ -31,24 +31,41 @@ VALID_PERMISSIONS = frozenset({
 # ── Command Safety ───────────────────────────────────────────────────────────
 # Commands that are NEVER allowed, regardless of permission state.
 # Checked by Agent._is_command_safe() before any shell execution.
-COMMAND_SAFELIST = frozenset({
+COMMAND_SAFELIST = {
     # Navegación y listado
-    "ls", "ll", "la", "pwd", "find", "tree", "du", "df",
+    "ls": {"args": ["-l", "-a", "-h", "-R", "-t"]},
+    "pwd": {"args": []},
+    "tree": {"args": ["-L", "-a"]},
+    "du": {"args": ["-h", "-s", "-c"]},
+    "df": {"args": ["-h"]},
     # Lectura de archivos
-    "cat", "less", "more", "head", "tail", "grep", "awk", "sed",
-    "wc", "diff", "sort", "uniq",
+    "cat": {"args": ["-n"]},
+    "less": {"args": []},
+    "head": {"args": ["-n", "-c"]},
+    "tail": {"args": ["-n", "-f"]},
+    "grep": {"args": ["-i", "-v", "-E", "-r", "-n"]},
+    "wc": {"args": ["-l", "-w", "-c"]},
     # Escritura segura (no destructiva)
-    "echo", "printf", "touch", "mkdir", "cp", "mv",
+    "echo": {"args": ["-n", "-e"]},
+    "touch": {"args": []},
+    "mkdir": {"args": ["-p"]},
+    "cp": {"args": ["-r", "-v"]},
+    "mv": {"args": ["-v"]},
     # Red (solo lectura)
-    "curl", "wget", "ping", "nslookup", "dig",
+    "curl": {"args": ["-X", "-H", "-d", "-s", "-L", "-I"]},
+    "wget": {"args": ["-q", "-O"]},
+    "ping": {"args": ["-c", "-t"]},
     # Desarrollo
-    "python3", "python", "pip", "pip3",
-    "node", "npm", "npx", "yarn",
-    "git",
+    "python": {"args": ["-m", "-c", "--version"]},
+    "python3": {"args": ["-m", "-c", "--version"]},
+    "pip": {"args": ["install", "uninstall", "list", "show"]},
+    "git": {"args": ["status", "add", "commit", "push", "pull", "clone", "log"]},
     # Sistema (solo lectura)
-    "whoami", "date", "env", "printenv", "uname",
-    "ps", "top", "free", "uptime",
-})
+    "whoami": {"args": []},
+    "date": {"args": []},
+    "env": {"args": []},
+    "uname": {"args": ["-a", "-r"]},
+}
 
 
 # ── Rate Limiter ─────────────────────────────────────────────────────────────
