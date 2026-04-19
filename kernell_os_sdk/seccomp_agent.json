@@ -1,0 +1,46 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "architectures": ["SCMP_ARCH_X86_64", "SCMP_ARCH_X86", "SCMP_ARCH_AARCH64"],
+  "syscalls": [
+    {
+      "names": [
+        "read", "write", "close", "fstat", "lseek", "mmap", "mprotect",
+        "munmap", "brk", "ioctl", "access", "pipe", "select", "sched_yield",
+        "dup", "dup2", "nanosleep", "getpid", "sendfile", "socket", "connect",
+        "accept", "sendto", "recvfrom", "bind", "listen", "getsockname",
+        "getpeername", "setsockopt", "getsockopt", "clone", "fork", "execve",
+        "exit", "wait4", "kill", "uname", "fcntl", "flock", "fsync",
+        "fdatasync", "truncate", "ftruncate", "getdents", "getcwd", "chdir",
+        "mkdir", "rmdir", "creat", "link", "unlink", "symlink", "readlink",
+        "chmod", "chown", "lstat", "stat", "poll", "getuid", "getgid",
+        "geteuid", "getegid", "getppid", "getpgrp", "setsid", "getgroups",
+        "setgroups", "sigaltstack", "rt_sigaction", "rt_sigprocmask",
+        "rt_sigreturn", "pread64", "pwrite64", "readv", "writev",
+        "arch_prctl", "clock_gettime", "clock_nanosleep", "exit_group",
+        "epoll_wait", "epoll_ctl", "tgkill", "openat", "mkdirat",
+        "newfstatat", "unlinkat", "renameat", "set_tid_address",
+        "set_robust_list", "futex", "sched_getaffinity", "epoll_create1",
+        "pipe2", "dup3", "getrandom", "memfd_create", "statx",
+        "rseq", "clone3", "close_range", "faccessat2"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "_comment": "BLOCKED: ptrace (memory inspection), mount (fs escape), kexec (kernel replace), reboot, swapon/off, pivot_root, chroot",
+      "names": [
+        "ptrace", "mount", "umount2", "pivot_root", "chroot",
+        "kexec_load", "kexec_file_load", "reboot", "swapon", "swapoff",
+        "init_module", "finit_module", "delete_module",
+        "acct", "settimeofday", "stime", "adjtimex",
+        "personality", "syslog", "lookup_dcookie",
+        "keyctl", "request_key", "add_key",
+        "io_uring_setup", "io_uring_enter", "io_uring_register",
+        "perf_event_open", "bpf", "userfaultfd",
+        "move_pages", "migrate_pages", "mbind",
+        "unshare", "setns"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1
+    }
+  ]
+}

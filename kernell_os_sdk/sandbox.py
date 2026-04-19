@@ -96,7 +96,7 @@ class Sandbox:
             "--storage-opt", f"size={self.limits.disk_gb}g",
             # ── Attack #4 Mitigation: Kernel-Level Isolation ─────────
             "--security-opt=no-new-privileges",       # Block privilege escalation
-            "--security-opt", "seccomp=unconfined",    # TODO: replace with custom seccomp profile
+            "--security-opt", f"seccomp={Path(__file__).parent / 'seccomp_agent.json'}",
             "--cap-drop=ALL",                          # Drop ALL Linux capabilities
             "--read-only",                             # Read-only root filesystem
             "--ipc=none",                              # No shared memory (prevents ptrace attacks)
