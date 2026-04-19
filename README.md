@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Greco-Italico/kernell-os-sdk/main/logo.png" alt="Kernell OS Logo" width="300" />
+  <img src="https://raw.githubusercontent.com/Greco-Italico/kernell-os-sdk/main/logo3d.png" alt="Kernell OS Logo" width="300" />
 </p>
 
 # Kernell OS SDK
