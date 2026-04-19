@@ -4,19 +4,55 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kernell-os-sdk"
-version = "0.1.0"
-description = "Kernell OS Full SDK (Meta-package). Includes both Agent SDK and Pay SDK."
+version = "0.2.0"
+description = "Open-source SDK for building autonomous agents with shared memory, M2M commerce ($KERN), cluster orchestration, and self-evolution. Beats Claude Managed Agents."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [
     { name = "Kernell OS", email = "dev@kernell.site" }
 ]
+keywords = ["agents", "ai", "autonomous", "m2m", "commerce", "llm", "orchestration", "kernell"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
-    "kernell-agent-sdk>=0.1.0",
-    "kernell-pay-sdk>=0.1.0"
+    "httpx>=0.25.0",
+    "pydantic>=2.0",
+]
+
+[project.optional-dependencies]
+memory = ["redis>=5.0"]
+llm = ["openai>=1.0", "anthropic>=0.25"]
+cluster = ["redis>=5.0", "httpx>=0.25.0"]
+sandbox = ["docker>=7.0"]
+gui = ["fastapi>=0.100.0", "uvicorn>=0.25.0", "cryptography>=41.0.0"]
+all = [
+    "redis>=5.0",
+    "openai>=1.0",
+    "anthropic>=0.25",
+    "docker>=7.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.25.0",
+    "cryptography>=41.0.0"
 ]
 
 [project.urls]
 Homepage = "https://kernell.site"
 Repository = "https://github.com/Greco-Italico/kernell-os-sdk"
+Documentation = "https://kernell.site/docs/sdk"
+
+[project.scripts]
+kernell = "kernell_os_sdk.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["kernell_os_sdk"]
