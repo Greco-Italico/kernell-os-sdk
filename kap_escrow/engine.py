@@ -278,15 +278,35 @@ class EscrowEngine:
         return True
 
     def _append_tx(self, record: Dict[str, Any]) -> None:
+        """
+        WAL-first commit protocol (Attack #2 fix):
+          1. Generate tx_id and nonce
+          2. Check nonce in WAL (survives Redis loss — Attack #6)
+          3. Check nonce in Redis (fast path)
+          4. Sign the record
+          5. Write to WAL as PENDING (crash-safe)
+          6. Apply to Redis
+          7. Mark WAL as COMMITTED
+        
+        If crash between step 5 and 6: WAL has record, Redis doesn't.
+        On recovery: replay WAL → rebuild Redis state.
+        """
         record.setdefault("ts", time.time())
         if "tx_id" not in record:
             record["tx_id"] = str(uuid.uuid4())
+
+        # Attack #6: WAL-authoritative nonce check (survives Redis wipe)
+        if self.wal.is_nonce_used(record["tx_id"]):
+            raise ValueError(f"Replay detected (WAL): tx_id={record['tx_id']}")
+
+        # Redis nonce check (fast path, but not authoritative)
         if not self._check_nonce(record["tx_id"]):
-            raise ValueError(f"Replay detected: tx_id={record['tx_id']}")
-            
+            raise ValueError(f"Replay detected (Redis): tx_id={record['tx_id']}")
+
         if self.private_key:
             sign_tx(record, self.private_key)
 
+        # Attack #2 fix: WAL FIRST (source of truth), then Redis
         record["wal_status"] = "PENDING"
         self.wal.append(record)
 

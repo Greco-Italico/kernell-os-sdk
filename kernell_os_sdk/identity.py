@@ -341,3 +341,61 @@ def verify_signature(message: str, signature_hex: str, public_key_hex: str) -> b
 class SecurityError(Exception):
     """Raised when a security invariant is violated."""
     pass
+
+
+# ── Attack #5 Mitigation: Immutable Agent Identity Registry ─────────
+
+_LUA_REGISTER_IDENTITY = """
+local reg_key = KEYS[1]
+if redis.call('EXISTS', reg_key) == 1 then return 0 end
+redis.call('SET', reg_key, ARGV[1])
+return 1
+"""
+
+
+class IdentityRegistry:
+    """
+    Immutable Agent Identity Registry backed by Redis.
+    Prevents Identity Forgery: UUID → PublicKey is WRITE-ONCE (atomic Lua).
+    
+    Attack scenario mitigated:
+      - Attacker generates keypair K2
+      - Claims to be agent_id "alice" (registered with K1)
+      - Signs with K2
+      - verify_agent("alice", msg, sig_K2) → FALSE (K2 ≠ K1)
+    """
+
+    def __init__(self, redis_client, prefix: str = "kernell:identity"):
+        self.r = redis_client
+        self.prefix = prefix
+        self._sha_register = self.r.script_load(_LUA_REGISTER_IDENTITY)
+
+    def _reg_key(self, agent_id: str) -> str:
+        return f"{self.prefix}:{agent_id}"
+
+    def register(self, agent_id: str, public_key_hex: str, metadata: dict = None) -> bool:
+        """Register agent identity. WRITE-ONCE: binding can NEVER be changed."""
+        if len(public_key_hex) != 64:
+            raise ValueError("Public key hex must be exactly 64 chars (32 bytes Ed25519)")
+
+        payload = json.dumps({
+            "public_key_hex": public_key_hex,
+            "registered_at": time.time(),
+            "metadata": metadata or {},
+        })
+        result = self.r.evalsha(self._sha_register, 1, self._reg_key(agent_id), payload)
+        return result == 1
+
+    def lookup(self, agent_id: str) -> Optional[dict]:
+        raw = self.r.get(self._reg_key(agent_id))
+        if not raw:
+            return None
+        return json.loads(raw)
+
+    def verify_agent(self, agent_id: str, message: str, signature_hex: str) -> bool:
+        """Verify message was signed by the REGISTERED owner of agent_id."""
+        entry = self.lookup(agent_id)
+        if not entry:
+            return False
+        return verify_signature(message, signature_hex, entry["public_key_hex"])
+

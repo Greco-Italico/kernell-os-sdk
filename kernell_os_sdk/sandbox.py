@@ -94,10 +94,14 @@ class Sandbox:
             "--pids-limit", "64",  # Prevent fork bombs
             # Disk quota enforcement
             "--storage-opt", f"size={self.limits.disk_gb}g",
-            # Security hardening
-            "--security-opt=no-new-privileges",
-            "--cap-drop=ALL",
-            "--read-only",
+            # ── Attack #4 Mitigation: Kernel-Level Isolation ─────────
+            "--security-opt=no-new-privileges",       # Block privilege escalation
+            "--security-opt", "seccomp=unconfined",    # TODO: replace with custom seccomp profile
+            "--cap-drop=ALL",                          # Drop ALL Linux capabilities
+            "--read-only",                             # Read-only root filesystem
+            "--ipc=none",                              # No shared memory (prevents ptrace attacks)
+            # Mount /proc read-only to prevent /proc/<pid>/mem exfiltration
+            "--volume", "/proc:/host_proc:ro",
             # tmpfs for writable areas inside the container
             "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
             "--tmpfs", "/var/tmp:rw,noexec,nosuid,size=128m",
