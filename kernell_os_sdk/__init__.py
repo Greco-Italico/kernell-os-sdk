@@ -5,7 +5,7 @@ __author__ = "Kernell OS"
 
 from kernell_os_sdk.agent import Agent
 from kernell_os_sdk.memory import Memory
-from kernell_os_sdk.cluster import Cluster
+from kernell_os_sdk.cluster import ClusterNode, ClusterDiscovery, BountyBoard, Bounty
 from kernell_os_sdk.wallet import Wallet
 from kernell_os_sdk.config import KernellConfig
 from kernell_os_sdk.sandbox import ResourceLimits, AgentPermissions
@@ -19,10 +19,15 @@ from kernell_os_sdk.health import SLOMonitor, HealthStatus
 from kernell_os_sdk.skill_loader import SkillLoader, SkillConfig
 from kernell_os_sdk.token_estimator import estimate_tokens
 from kernell_os_sdk.persister import ToolResultPersister
-from kernell_os_sdk.dashboard import CommandCenter
+from kernell_os_sdk.llm import (
+    BaseLLMProvider, OllamaProvider, AnthropicProvider,
+    OpenAIProvider, LLMRouter, ComplexityLevel, LLMMessage
+)
+from kernell_os_sdk.delegation import SubAgentManager, TaskQueue
 
 __all__ = [
-    "Agent", "Memory", "Cluster", "Wallet", "KernellConfig",
+    "Agent", "Memory", "ClusterNode", "ClusterDiscovery", "BountyBoard", "Bounty", 
+    "Wallet", "KernellConfig",
     "ResourceLimits", "AgentPermissions", "AgentPassport",
     "AgentGUI", "CommandCenter",
     "HardwareFingerprint", "SecurityError",
@@ -31,5 +36,8 @@ __all__ = [
     "SLOMonitor", "HealthStatus",
     "SkillLoader", "SkillConfig",
     "estimate_tokens", "ToolResultPersister",
+    "BaseLLMProvider", "OllamaProvider", "AnthropicProvider",
+    "OpenAIProvider", "LLMRouter", "ComplexityLevel", "LLMMessage",
+    "SubAgentManager", "TaskQueue",
     "__version__",
 ]

@@ -18,6 +18,7 @@ from .sandbox import Sandbox, ResourceLimits, AgentPermissions
 from .budget import TokenBudget
 from .health import SLOMonitor
 from .constants import VALID_PERMISSIONS, COMMAND_BLACKLIST
+from .llm import BaseLLMProvider, LLMMessage
 
 logger = logging.getLogger("kernell.agent")
 
@@ -49,13 +50,15 @@ class Agent:
         storage_dir: str = "~/.kernell/agents",
         limits: Optional[ResourceLimits] = None,
         permissions: Optional[AgentPermissions] = None,
-        config: Optional[KernellConfig] = None
+        config: Optional[KernellConfig] = None,
+        engine: Optional['BaseLLMProvider'] = None,  # Support for custom LLM engines
     ):
         self.name = name
         self.description = description
         self.system_prompt = system_prompt
         self.rate = rate_kern_per_task
         self.config = config or default_config
+        self.engine = engine
 
         # Identity & Passport
         self.storage_path = Path(storage_dir).expanduser() / name.lower().replace(" ", "_")
@@ -145,6 +148,26 @@ class Agent:
             if not self.permissions.gui_automation:
                 return "Error: GUI automation permission is disabled."
             return f"Clicked at ({x}, {y})"
+
+        # Sub-Agent Delegation
+        self._delegation_manager = None
+
+    def enable_delegation(self, max_workers: int, worker_engine: 'BaseLLMProvider', timeout: float = 60.0):
+        """Enable local sub-agent delegation."""
+        from .delegation import SubAgentManager
+        self._delegation_manager = SubAgentManager(self)
+        self._delegation_manager.enable(max_workers=max_workers, worker_engine=worker_engine, timeout=timeout)
+
+    def disable_delegation(self):
+        """Disable local sub-agent delegation."""
+        if self._delegation_manager:
+            self._delegation_manager.disable()
+
+    def delegate_batch(self, tasks: list[str], max_concurrent: int = None) -> list[str]:
+        """Delegate a batch of tasks to the local sub-agent swarm."""
+        if not self._delegation_manager or not self._delegation_manager.is_enabled():
+            raise RuntimeError("Delegation is not enabled. Call enable_delegation() first.")
+        return self._delegation_manager.execute_batch(tasks, max_concurrent)
 
     def skill(self, name: str = None, description: str = None):
         """Decorator to register a custom skill (tool) for the agent."""
