@@ -6,7 +6,7 @@ import json
 from .__init__ import __version__
 
 def clear_screen():
-    os.system('cls' if os.name == 'nt' else 'clear')
+    print('\033[2J\033[H', end='')
 
 def main():
     parser = argparse.ArgumentParser(
