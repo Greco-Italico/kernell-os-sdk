@@ -19,6 +19,26 @@ EXECUTION_LATENCY = Histogram(
     buckets=[0.001, 0.003, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0],
 )
 
+# ── Precision Bottleneck Profiling ───────────────────────────────────────────
+SNAPSHOT_RESTORE_LATENCY = Histogram(
+    "kernell_snapshot_restore_latency_seconds",
+    "Time spent physically restoring a Firecracker microVM from snapshot",
+    buckets=[0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5],
+)
+
+VSOCK_CONNECT_LATENCY = Histogram(
+    "kernell_vsock_connect_latency_seconds",
+    "Time spent in the retry loop attempting to establish vsock connection",
+    buckets=[0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5],
+)
+
+QUEUE_WAIT_LATENCY = Histogram(
+    "kernell_queue_wait_latency_seconds",
+    "Time spent waiting in the Orchestrator/Scheduler queue before worker pick-up",
+    labelnames=["tenant_tier"],
+    buckets=[0.001, 0.005, 0.01, 0.05, 0.1, 0.2, 0.5, 1.0],
+)
+
 # ── Throughput ───────────────────────────────────────────────────────────────
 REQUESTS_TOTAL = Counter(
     "kernell_requests_total",

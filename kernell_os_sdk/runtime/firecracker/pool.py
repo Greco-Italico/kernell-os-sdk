@@ -84,12 +84,17 @@ class SnapshotPool:
         self.manager.cleanup_vm(vm_id, sock, process)
 
     def _restore_new(self) -> RestoredVM:
+        from . import metrics as prom
         if not self.base_snap_path:
             self.initialize_base_snapshot()
             
+        start_t = time.time()
         vm_id, sock, process = self.manager.restore_snapshot(
             self.base_snap_path, self.base_mem_path
         )
+        duration = time.time() - start_t
+        prom.SNAPSHOT_RESTORE_LATENCY.observe(duration)
+        
         return RestoredVM(vm_id, sock, process, time.time())
 
     def _intelligent_auto_scale(self):

@@ -165,6 +165,7 @@ class FirecrackerRuntime(BaseRuntime):
         s.settimeout(timeout)
 
         connected = False
+        start_t = time.time()
         deadline = time.monotonic() + timeout
         for _ in range(20):
             if time.monotonic() > deadline:
@@ -175,6 +176,8 @@ class FirecrackerRuntime(BaseRuntime):
                 break
             except (ConnectionRefusedError, OSError):
                 time.sleep(0.1)
+                
+        prom.VSOCK_CONNECT_LATENCY.observe(time.time() - start_t)
 
         if not connected:
             s.close()

@@ -27,13 +27,15 @@ class RuntimeOrchestrator:
         with self.lock:
             self.futures[request_id] = future
         
-        # Attach the request ID to the request object dynamically for tracing
+        # Attach the request ID and submit timestamp for tracing
         request._internal_id = request_id
+        request._submit_time = time.time()
         
         self.scheduler.submit(request)
         return future
 
     def _worker_loop(self):
+        from . import metrics as prom
         while self.running:
             req = self.scheduler.next()
             
@@ -42,6 +44,15 @@ class RuntimeOrchestrator:
                 continue
                 
             req_id = getattr(req, "_internal_id", None)
+            submit_time = getattr(req, "_submit_time", None)
+            
+            if submit_time:
+                wait_time = time.time() - submit_time
+                # Extract tier for prometheus labels
+                tier = getattr(req, "tenant_id", "default_tenant")
+                if tier not in ["free", "pro", "enterprise"]:
+                    tier = "free" # Fallback mapping
+                prom.QUEUE_WAIT_LATENCY.labels(tenant_tier=tier).observe(wait_time)
             
             try:
                 # 1. Execute via the underlying FirecrackerRuntime (which applies Admission Control)
