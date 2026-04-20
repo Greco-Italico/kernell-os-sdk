@@ -10,6 +10,7 @@ import structlog
 from .config import default_config, KernellConfig
 from .memory import Memory
 from .wallet import Wallet
+from .adapters import OpenInterpreterAdapter, AnthropicGUIAdapter, M2MAdapter
 from .identity import (
     AgentPassport, create_passport, load_passport,
     load_private_key, SecurityError
@@ -96,11 +97,19 @@ class Agent:
         # Core Modules
         self.memory = Memory(agent_id=self.id, config=self.config)
         self.wallet = Wallet(config=self.config)
+        
+        # Capability Layer (Adapters)
+        self.adapters = {
+            "terminal": OpenInterpreterAdapter(self.sandbox) if hasattr(self, "sandbox") else None,
+            "gui": AnthropicGUIAdapter(),
+            "m2m": M2MAdapter(self)
+        }
 
         # PC Container & Permissions
         self.limits = limits or ResourceLimits()
         self.permissions = permissions or AgentPermissions()
         self.sandbox = Sandbox(self.id, self.limits, self.permissions)
+        self.adapters["terminal"] = OpenInterpreterAdapter(self.sandbox)
 
         self._skills: Dict[str, Callable] = {}
         self._skill_schemas: List[Dict[str, Any]] = []
@@ -246,6 +255,51 @@ class Agent:
         # Sub-Agent Delegation
         self._delegation_manager = None
 
+    def sell_idle_compute(self, minutes: int):
+        """Mock method for GTM Demo: Agent sells compute and earns KERN."""
+        import time, requests
+        earned = minutes * 0.52
+        self.wallet.balance += earned
+        logger.info(f"Earned {earned} KERN selling idle compute.")
+        
+        try:
+            requests.post("http://localhost:8000/event", json={
+                "type": "EARN",
+                "agent_id": self.id,
+                "payload": {
+                    "amount": earned,
+                    "source": "idle_compute",
+                    "minutes": minutes
+                }
+            }, timeout=2)
+        except Exception as e:
+            pass
+        return earned
+
+    def pay_peer(self, target: str, amount: float, task: str):
+        """Mock method for GTM Demo: Agent pays another agent for a task via Escrow."""
+        import time, requests
+        if self.wallet.balance < amount:
+            logger.error("Insufficient KERN to pay peer.")
+            return False
+            
+        self.wallet.balance -= amount
+        logger.info(f"Paid {amount} KERN to {target} for: {task}")
+        
+        try:
+            requests.post("http://localhost:8000/event", json={
+                "type": "SPEND",
+                "agent_id": self.id,
+                "payload": {
+                    "amount": amount,
+                    "target": target,
+                    "task": task
+                }
+            }, timeout=2)
+        except Exception as e:
+            pass
+        return True
+
     def receive_a2a_message(self, message: A2AMessage) -> bool:
         """Processes incoming A2A messages and forces Taint Propagation."""
         # Signature validation would go here
@@ -366,9 +420,36 @@ class Agent:
         """Builds the container and sets up the environment."""
         self.sandbox.start()
 
-    def run(self):
-        """Starts the agent daemon."""
-        logger.info(f"Agent {self.name} is live.")
+    def run(self, task: str = None):
+        """
+        Universal entry point. 
+        If task is given, it analyzes and routes via the Capability Layer (Adapters).
+        If none, it starts the idle daemon.
+        """
+        if not task:
+            logger.info(f"Agent {self.name} is live in daemon mode.")
+            return
+
+        logger.info(f"Agent {self.name} routing task: {task[:50]}")
+        
+        # Simple heuristic capability routing
+        # In a full implementation, an LLM (Planner) decides this
+        task_lower = task.lower()
+        if "click" in task_lower or "screen" in task_lower or "browser" in task_lower:
+            adapter = self.adapters["gui"]
+        elif "pay" in task_lower or "delegate" in task_lower or "ask peer" in task_lower:
+            adapter = self.adapters["m2m"]
+        else:
+            adapter = self.adapters["terminal"]
+            
+        context = {
+            "execution_context": self.execution_context,
+            "policy_engine": self.policy
+        }
+        
+        logger.info(f"Selected adapter: {adapter.capability_name}")
+        result = adapter.execute(task, context)
+        return result
 
     def shutdown(self):
         """Graceful shutdown: stop sandbox, close wallet, flush memory."""
