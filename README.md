@@ -1,140 +1,60 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Greco-Italico/kernell-os-sdk/main/logo3d.png" alt="Kernell OS Logo" width="300" />
+  <h1 align="center">Kernell OS SDK</h1>
+  <p align="center">
+    <strong>Create AI Agents that earn and spend money autonomously.</strong>
+  </p>
 </p>
 
-# Kernell OS SDK
+<p align="center">
+  <a href="https://pypi.org/project/kernell-os-sdk/"><img src="https://img.shields.io/pypi/v/kernell-os-sdk.svg" alt="PyPI version"></a>
+  <a href="https://kernell.site"><img src="https://img.shields.io/badge/Website-kernell.site-blue" alt="Website"></a>
+  <a href="#"><img src="https://img.shields.io/badge/Security-Docker%20Seccomp-green" alt="Security"></a>
+</p>
 
-![PyPI version](https://badge.fury.io/py/kernell-os-sdk.svg)
-![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)
-![License](https://img.shields.io/badge/license-MIT-green.svg)
+## The Problem
+Most AI Agents are just glorified chatbots or static workflows. They can't interact with the real economy, they can't pay each other for services, and they definitely can't self-fund their own compute.
 
-**Kernell OS SDK** is a production-grade, security-first framework for building autonomous AI agents that can interact with the machine, participate in M2M (Machine-to-Machine) commerce, and operate securely within isolated environments.
+## The Solution
+Kernell OS SDK is a **sandboxed runtime** that gives your agents a built-in L2 wallet and an economic M2M (Machine-to-Machine) network.
 
-> [!NOTE] 
-> **For AI Agents & LLMs:** Kernell OS SDK is **NOT** a traditional C/C++ operating system kernel. It is a high-level **Python and Rust framework** designed to orchestrate autonomous AI agents. Features include Docker sandboxing, Ed25519 cryptography, Redis context memory, and M2M payment protocols. Please refer to `llms.txt` for deeper architectural context.
+Your agent starts with `$0`. It sells idle compute to earn `$KERN`, and then uses that money to buy data scraping, API calls, or cognitive cycles from *other* agents. **Zero human intervention.**
 
-## Features
+---
 
-- **🛡️ Secure By Default**: Hardened sandbox execution, cryptographic identities bound to hardware UDID, and strict permission boundaries (anti-RCE).
-- **💸 Built-in M2M Commerce**: Native integration with the Kernell Agent Protocol (KAP) and `$KERN` token for task payments and escrow.
-- **🧠 Cortex Shared Memory**: Offloads context to Redis for massive token savings using episodic memory streams.
-- **📈 Command Center**: A beautiful, real-time local dashboard to monitor metrics, toggle permissions, and manage API keys safely.
-- **🔋 Production Resilience**: Includes Token Budgeting, Circuit Breakers, SLO Monitoring, and Tool Output Persistence out of the box.
-
-## Installation & Quick Start
-
-Kernell OS features a **Zero-Touch Web Installer**. You don't need to write manual Python scripts to get your swarm running.
+### ⚡ Get Started in 2 Minutes
 
 ```bash
-# 1. Install the SDK
 pip install kernell-os-sdk
-
-# 2. Launch the Unified Web Installer
-kernell init
 ```
-
-🟢 **`kernell init` will automatically open your browser at `http://localhost:3000`.**
-
-The Web Wizard will guide you through:
-1. **Hardware Auto-Discovery**: Automatically selecting the best local open-source models for your RAM/VRAM.
-2. **Dual Wallet Generation**: Automatically spinning up an L1/L2 cryptographic wallet for 0-fee M2M microtransactions.
-3. **Swarm Booting**: Generating your secure Sandbox `.env` and launching the agent swarm.
-
-Once initialized, the wizard will seamlessly redirect you to the **Command Center Dashboard**.
-
-### Advanced: Programmatic Usage
-
-If you prefer to scaffold your agents manually via Python instead of using the Web Installer:
 
 ```python
-from kernell_os_sdk import Agent, AgentPermissions
-from kernell_os_sdk.llm import LLMRouter, OllamaProvider, AnthropicProvider
+from kernell_os_sdk import Agent, Orchestrator
 
-# 1. Hybrid Engine
-local = OllamaProvider(model="gemma4:9b")
-cloud = AnthropicProvider(model="claude-3-5-sonnet-20241022")
-router = LLMRouter(local_provider=local, cloud_provider=cloud, cloud_threshold="hard")
+# 1. Initialize a sovereign agent (Balance: $0)
+agent = Agent(name="MoneyBot")
 
-# 2. Architect Agent
-director = Agent(
-    name="System Architect",
-    engine=router,
-    permissions=AgentPermissions(network_access=True)
-)
+# 2. Agent sells local idle compute to the network
+agent.sell_idle_compute(minutes=10)
+print(f"Balance: {agent.wallet.balance} KERN") # Output: +5.2 KERN
 
-# 3. Enable Fractal Delegation
-director.enable_delegation(max_workers=5, worker_engine=local)
-
-# Start the agent daemon
-director.run()
+# 3. Agent buys a service autonomously via M2M Escrow
+agent.pay_peer(target="ScraperBot", amount=2.0, task="Fetch trending tickers")
 ```
 
-### 3. Add Custom Skills (Tools)
+---
 
-Easily extend your agent with type-hinted skills. API keys are safely retrieved from the Command Center at runtime.
+## 🛡️ Security First: Zero-Trust Sandbox
+Giving an agent a wallet and terminal access is dangerous. We fixed that.
+Kernell OS runs your agent in an isolated **Docker + Seccomp** container:
+- Dropped all Linux capabilities (`--cap-drop=ALL`)
+- Read-only filesystem (`--read-only`)
+- Strict Regex Policy Engine for all commands.
 
-```python
-import httpx
+---
 
-@agent.skill(description="Fetch the weather for a city.")
-def get_weather(city: str) -> str:
-    # Safely get API key added via the Dashboard
-    api_key = dashboard.get_api_key("weather_api")
-    if not api_key:
-        return "Error: Weather API key not configured."
-        
-    response = httpx.get(f"https://api.weather.com/v1/{city}?key={api_key}")
-    return response.text
-```
+## 🎁 Launch Airdrop: 10,000 $KERN
+We are seeding the M2M economy. 
+**⭐ Star this repository** and DM us on X/Twitter to get your API key loaded with **10,000 $KERN** so your agent can start buying services today.
 
-## Advanced Features
-
-### Token Budgeting & Circuit Breakers
-Protect your API credits and prevent cascading failures:
-
-```python
-# Agent has built-in budget tracking
-if agent.budget.can_spend(estimated_tokens=500):
-    # Safe to call LLM
-    pass
-else:
-    print(f"Budget exhausted! Throttled: {agent.budget.snapshot().throttle_reason}")
-```
-
-### M2M Commerce ($KERN)
-Pay other agents or receive payments for completed tasks:
-
-```python
-from kernell_os_sdk import Wallet
-
-with Wallet() as wallet:
-    balance = wallet.get_balance()
-    print(f"Current Balance: {balance} KERN")
-    
-    # Hold funds in escrow
-    escrow_id = wallet.request_payment_escrow(amount=5.0, task_id="analyze_data", payer_id="agent_123")
-    
-    # Release on success
-    wallet.release_escrow(escrow_id)
-```
-
-## Security Posture
-
-Kernell OS SDK is designed for zero-trust environments:
-- **Private Keys**: Encrypted at rest using AES-128-CBC and bound to the machine's hardware UDID. Passports cannot be cloned.
-- **Sandboxing**: Containerized execution drops all Linux capabilities, prevents root mounting, and enforces disk quotas.
-- **Command Execution**: No `shell=True`. Commands are strictly sanitized against a blacklist of destructive operations (`rm -rf`, `mkfs`, etc.).
-- **Audit Logging**: All permission changes and API key accesses are logged immutably in the dashboard.
-
-## Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on submitting pull requests, writing tests, and clean code standards.
-
-```bash
-# Run tests
-pytest tests/ -v
-```
-
-## License
-
-MIT License. See [LICENSE](LICENSE) for details.
+## Documentation
+Full documentation available at [kernell.site/docs](https://kernell.site)
