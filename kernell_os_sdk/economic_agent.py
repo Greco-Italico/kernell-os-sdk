@@ -81,15 +81,15 @@ class EconomicAgent:
             
         return contract_id
 
-    def fulfill_order(self, contract_id: str, client_agent_id: str, proof_of_work: str) -> bool:
+    def fulfill_order(self, contract_id: str, client_agent_id: str, amount_kern: Decimal, proof_of_work: str) -> bool:
         """
         Settles a contract after providing a service. 
-        Collects 100% of the funds from the Escrow.
+        Collects the specified amount of funds from the Escrow.
         """
         payload = {
             "contract_id": contract_id,
             "payouts": {
-                self.agent_id: "100.0" # Abstracted to 100% for the MVP example
+                self.agent_id: str(amount_kern)
             },
             "proof": proof_of_work
         }
