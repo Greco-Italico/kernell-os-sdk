@@ -22,7 +22,7 @@ logger = logging.getLogger("kernell.sandbox")
 # Docker image digest for supply chain verification
 AGENT_BASE_IMAGE_TAG = "kernell/agent-base:latest"  # Para referencia humana
 # ↓ Usar este en producción (inmutable, no puede ser reemplazado silenciosamente)
-AGENT_BASE_IMAGE = "kernell/agent-base@sha256:REEMPLAZAR_CON_DIGEST_REAL_DE_SHA256"
+AGENT_BASE_IMAGE = "kernell/agent-base@sha256:34a57c2f12b3b22305db83db1e2aa58fb12907dd428d6f22f3ebc6e4e260d926"
 
 def _verify_image_integrity() -> bool:
     """

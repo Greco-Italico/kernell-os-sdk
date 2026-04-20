@@ -1,0 +1,26 @@
+FROM python:3.13-slim
+
+# Security: non-root user
+RUN useradd -ms /bin/bash agent_user
+
+WORKDIR /app
+
+# Minimal attack surface — no compilers, no dev headers
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install SDK from PyPI (pinned version)
+RUN pip install --no-cache-dir kernell-os-sdk==1.4.2 python-dotenv
+
+# Strict permissions
+RUN chown -R agent_user:agent_user /app
+
+# Drop to unprivileged user
+USER agent_user
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD python -c "import kernell_os_sdk; print('ok')" || exit 1
+
+CMD ["python", "-c", "print('Kernell Agent Base Ready')"]
