@@ -1,0 +1,16 @@
+#!/bin/sh
+
+echo "[VM] Booting..."
+
+# montar pseudo-fs necesarios
+mount -t proc none /proc
+mount -t sysfs none /sys
+
+echo "[VM] Starting vsock runtime..."
+
+python3 /app/runner.py
+EXIT_CODE=$?
+
+echo "[VM] Finished with code $EXIT_CODE"
+echo "[VM] Shutdown"
+poweroff -f

@@ -154,8 +154,8 @@ class Sandbox:
                 
                 resolved_path = Path(host_path).resolve()
                 host_path_str = str(resolved_path)
-                    continue
                 
+
                 container_path = f"/workspace/{resolved_path.name}"
                 args.extend(["-v", f"{host_path_str}:{container_path}:{mode}"])
 
