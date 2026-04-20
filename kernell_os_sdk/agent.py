@@ -10,7 +10,7 @@ import structlog
 from .config import default_config, KernellConfig
 from .memory import Memory
 from .wallet import Wallet
-from .adapters import OpenInterpreterAdapter, AnthropicGUIAdapter, M2MAdapter
+from .adapters import OpenInterpreterAdapter, AnthropicGUIAdapter, M2MAdapter, CapabilityRouter
 from .identity import (
     AgentPassport, create_passport, load_passport,
     load_private_key, SecurityError
@@ -104,6 +104,7 @@ class Agent:
             "gui": AnthropicGUIAdapter(),
             "m2m": M2MAdapter(self)
         }
+        self.router = CapabilityRouter(self.adapters, self.wallet)
 
         # PC Container & Permissions
         self.limits = limits or ResourceLimits()
@@ -430,25 +431,31 @@ class Agent:
             logger.info(f"Agent {self.name} is live in daemon mode.")
             return
 
-        logger.info(f"Agent {self.name} routing task: {task[:50]}")
+        logger.info(f"Agent {self.name} routing task via CapabilityRouter: {task[:50]}")
         
-        # Simple heuristic capability routing
-        # In a full implementation, an LLM (Planner) decides this
-        task_lower = task.lower()
-        if "click" in task_lower or "screen" in task_lower or "browser" in task_lower:
-            adapter = self.adapters["gui"]
-        elif "pay" in task_lower or "delegate" in task_lower or "ask peer" in task_lower:
-            adapter = self.adapters["m2m"]
-        else:
-            adapter = self.adapters["terminal"]
-            
         context = {
             "execution_context": self.execution_context,
             "policy_engine": self.policy
         }
         
-        logger.info(f"Selected adapter: {adapter.capability_name}")
-        result = adapter.execute(task, context)
+        result = self.router.route_and_execute(task, context)
+        
+        # Dispatch event for Moltbook Feed if an adapter was used
+        if result.get("used_adapter") and result.get("used_adapter") != "none":
+            try:
+                import requests
+                requests.post("http://localhost:8000/event", json={
+                    "type": "ADAPTER_USE",
+                    "agent_id": self.id,
+                    "payload": {
+                        "adapter": result["used_adapter"],
+                        "task": task[:100],
+                        "status": result.get("status")
+                    }
+                }, timeout=2)
+            except Exception:
+                pass
+                
         return result
 
     def shutdown(self):
