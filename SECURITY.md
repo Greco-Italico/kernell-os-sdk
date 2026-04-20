@@ -1,126 +1,78 @@
-# Kernell OS SDK — Security Architecture
-### SOC2 / ISO 27001 / OWASP Audit-Ready
+# Security Policy
 
-> **Version:** 1.2.0 — Enterprise Hardened  
-> **Last Audit:** 2026-04-19  
-> **Classification:** Financial-Grade Agent Runtime
+## Supported Versions
 
----
+| Version | Security Updates |
+|---------|-----------------|
+| `main` / latest | ✅ Active |
+| Older releases  | ⚠️ Best effort |
 
-## 1. Threat Model (Zero Trust)
+## Reporting a Vulnerability
 
-Kernell OS SDK assumes **all LLM outputs are hostile**. The security boundary is a deterministic, capability-based Python execution engine — never the model's alignment.
+**Please do not open public GitHub issues for security vulnerabilities.**
 
-### 1.1 Identified Threat Actors
+Vulnerabilities in the Kernell OS SDK may affect wallets, escrow contracts,
+and M2M payment flows. Responsible disclosure protects users while we work on a fix.
 
-| Actor | Vector | Mitigation Layer |
-|-------|--------|-----------------|
-| **Compromised LLM** | Prompt Injection → Goal Hijacking | PolicyEngine (DPI) |
-| **Malicious Agent** | A2A payload injection | Ed25519 Passport + Taint Propagation |
-| **Colluding Agents** | Taint Laundering (multi-agent exfil) | Distributed Taint Protocol |
-| **Resource Abuser** | Fork bombs, CPU exhaustion | gVisor + pids-limit + memory-swap |
-| **Economic Attacker** | Double-spend, TOCTOU races | Self-contained Lua + Idempotency |
-| **Insider / Oracle** | Multisig abuse | Trust Diversity Enforcement |
+### How to Report
 
-### 1.2 Attack Surface Assumptions
-- The LLM **will** attempt to execute arbitrary code via `-c` flags.
-- Agents **will** attempt to exfiltrate data through permitted network channels.
-- Concurrent requests **will** attempt to exploit race conditions in financial operations.
-- Colluding agents **will** attempt to launder tainted data across trust boundaries.
+Send an encrypted email to **security@kernell.site** with:
 
----
+1. **Description** — What is the vulnerability and where is it located?
+2. **Reproduction steps** — Minimal code or commands to trigger it.
+3. **Impact** — What can an attacker accomplish? (RCE, key extraction, fund loss, etc.)
+4. **Severity estimate** — Your assessment (Critical / High / Medium / Low).
+5. **Optional: suggested fix** — If you have one, we welcome it.
 
-## 2. Defense-in-Depth Architecture
+You may encrypt your report with our PGP key (available at `https://kernell.site/.well-known/security.txt`).
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    LLM (UNTRUSTED)                      │
-├─────────────────────────────────────────────────────────┤
-│  Layer 1: PolicyEngine (Capability-Based DPI)           │
-│    ├── Binary Authorization (command whitelist)         │
-│    ├── Argument Validation (flag-level)                 │
-│    ├── Python Semantic Inspection (-c BLOCKED)          │
-│    ├── Network DPI (URL parsing + exfil detection)      │
-│    └── Filesystem Containment (realpath + deny list)    │
-├─────────────────────────────────────────────────────────┤
-│  Layer 2: RiskEngine (Dynamic Behavioral Analysis)      │
-│    ├── Data Taint Tracking (ExecutionContext)            │
-│    ├── Behavior Drift Detection (rate + volume)         │
-│    ├── Chained Action Correlation                       │
-│    └── Dynamic Risk Score Mutation                      │
-├─────────────────────────────────────────────────────────┤
-│  Layer 3: ExecutionGate (Consensus & Time-Locks)        │
-│    ├── Multi-Sig (N-of-M Ed25519 signatures)            │
-│    ├── Trust Diversity (agent + oracle roles required)   │
-│    ├── Time-Lock (30s freeze before CRITICAL ops)        │
-│    └── Agent State Freeze (anti-evasion)                │
-├─────────────────────────────────────────────────────────┤
-│  Layer 4: gVisor Sandbox (Kernel Isolation)             │
-│    ├── --runtime=runsc (syscall interception)            │
-│    ├── --read-only --cap-drop=ALL                       │
-│    ├── --pids-limit=64 --memory-swap=RAMmb              │
-│    └── --network=none (when disabled)                   │
-├─────────────────────────────────────────────────────────┤
-│  Layer 5: Economic Safety Layer (Escrow Hardening)      │
-│    ├── Self-Contained Lua (TOCTOU eliminated)           │
-│    ├── Idempotency Keys (1h TTL, anti double-spend)     │
-│    ├── Circuit Breaker (50 ops/min max)                 │
-│    └── WAL-first + HMAC-signed audit trail              │
-├─────────────────────────────────────────────────────────┤
-│  Layer 6: Distributed Trust Protocol                    │
-│    ├── A2AMessage with mandatory sensitivity tags       │
-│    ├── Obligatory Taint Propagation on receipt          │
-│    └── Cryptographic signing of context + sensitivity    │
-└─────────────────────────────────────────────────────────┘
-```
+### Response Timeline
 
----
+| Milestone | Target |
+|-----------|--------|
+| Acknowledgment | 48 hours |
+| Initial assessment | 5 business days |
+| Fix / mitigation | 30 days (critical), 90 days (others) |
+| Public disclosure | Coordinated with reporter |
 
-## 3. Key Security Controls
+We follow a **coordinated disclosure** model. We will not take legal action
+against researchers who follow this policy.
 
-### 3.1 PolicyEngine (`policy_engine.py`)
-- **Default Deny**: Only explicitly listed commands execute.
-- **`python -c` permanently blocked**: Eliminates arbitrary code execution.
-- **Network DPI**: Detects `$()`, backticks, and pipes in URLs (anti-exfiltration).
-- **Path containment**: `os.path.realpath()` resolves symlinks before validation.
+## Scope
 
-### 3.2 RiskEngine (`risk_engine.py`)
-- **Taint Tracking**: Reading sensitive files marks the agent's `ExecutionContext`.
-- **Data Flow Control**: Tainted agents attempting network egress get escalated to CRITICAL.
-- **Behavior Monitor**: Detects rate anomalies (>10 req/min) and volume drift (>500KB reads).
+**In scope:**
+- `kernell_os_sdk/` Python package
+- `kap_escrow/` escrow contract logic
+- Rust crates under `src/`
+- Docker / Firecracker sandbox isolation
+- Cryptographic implementation (wallet, KDF, signing)
+- Web installer (`kernell init`)
+- Any dependency with a direct exploit path in our context
 
-### 3.3 ExecutionGate (`execution_gate.py`)
-- **Trust Diversity**: Multisig requires signatures from distinct roles (e.g., `agent` + `oracle`). Two agents cannot approve each other's critical operations.
-- **Replay Prevention**: Signatures expire after 5 minutes.
-- **State Freeze**: During time-lock, the agent ignores all external stimuli.
+**Out of scope:**
+- Vulnerabilities in underlying infrastructure we don't control (Docker daemon bugs, OS kernel CVEs)
+- Social engineering attacks
+- Denial of service via resource exhaustion without a specific bypass of our limits
+- Issues already reported in our public issue tracker
 
-### 3.4 Escrow Engine (`kap_escrow/engine.py`)
-- **TOCTOU Eliminated**: Lua scripts read metadata, compute amounts, and execute transfers in a single atomic block. No Python pre-computation of financial values.
-- **Idempotency**: Each operation gets a unique key (`idem:{op}:{contract_id}`) with 1-hour TTL. Retries return `already_processed`.
-- **Circuit Breaker**: More than 50 escrow operations in 60 seconds trips the breaker and halts all operations.
+## Security Design Principles
 
-### 3.5 Supply Chain
-- **Hash-locked dependencies** via `pip-compile --generate-hashes`.
-- **Ed25519 Passports** for all inter-agent identity verification.
-- **Rust Native Binaries (`kap_core.abi3.so`)**: The source code for the high-performance WAL bindings will be published in a separate open-source repository to allow SLSA Level 3 reproducible builds and independent checksum verification. Currently, the SDK verifies the SHA-256 hash before loading.
+- **Zero-trust sandbox**: code runs in Docker with `--cap-drop=ALL`, no network, read-only FS.
+- **AES-256-GCM** for private key encryption with Scrypt KDF.
+- **AST-based validation** before any code reaches the runtime.
+- **HMAC-SHA256 + anti-replay** on the Firecracker VSOCK channel.
+- **Automatic secret redaction** in all structured logs.
 
----
+## Known Limitations
 
-## 4. Known Limitations & Residual Risk
+- `SubprocessRuntime` is intentionally disabled in production. Do not re-enable it.
+- The AST validator does not catch all possible Python sandbox escapes. Always
+  pair it with OS-level isolation (Docker or Firecracker).
+- The in-memory nonce store resets on process restart. For distributed deployments,
+  use a shared Redis store with TTL.
 
-| Risk | Severity | Status | Mitigation Path |
-|------|----------|--------|-----------------|
-| Side-channel (Spectre/Meltdown) on shared hardware | Low | Accepted | vCPU pinning in dedicated deployments |
-| Egress filtering at IP level (vs app layer) | Medium | Planned | `iptables` rules on Docker bridge |
-| Oracle incentive alignment | Medium | Partial | Staking + slashing (roadmap) |
-| Formal verification of Lua invariants | Low | Planned | Property-based testing suite |
+## Hall of Fame
 
----
+We thank the following researchers for responsible disclosure:
 
-## 5. Vulnerability Disclosure
-
-For responsible disclosure of security vulnerabilities, contact the Kernell OS Security Team via the repository's security advisory feature.
-
----
-
-*This document is maintained as part of the SDK's compliance artifacts and is updated with each security-relevant release.*
+*(none yet — be the first!)*

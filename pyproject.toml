@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kernell-os-sdk"
-version = "1.5.0"
+version = "1.5.1"
 description = "Kernell OS Open-Source Framework for Autonomous PC Agents with shared memory, M2M commerce ($KERN), cluster orchestration, and self-evolution. Beats Claude Managed Agents."
 readme = "README.md"
 requires-python = ">=3.9"
