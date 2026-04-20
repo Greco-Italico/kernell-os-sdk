@@ -12,10 +12,11 @@
 </p>
 
 ## The Problem
-Most AI Agents are just glorified chatbots or static workflows. They can't interact with the real economy, they can't pay each other for services, and they definitely can't self-fund their own compute.
+Most AI Agents are just glorified chatbots or static workflows. Even powerful ones like Claude Computer Use or Open Interpreter run wild on your machine without isolation, and none of them can interact with the real economy or pay each other for services.
 
 ## The Solution
-Kernell OS SDK is a **sandboxed runtime** that gives your agents a built-in L2 wallet and an economic M2M (Machine-to-Machine) network.
+Kernell OS is the **AWS + Stripe + OS** for AI Agents.
+We don't compete with Claude or Open Interpreter; we **absorb** them. Kernell OS provides a unified **Capability Layer** (Adapters for GUI, Terminal, APIs), a zero-trust **Governance Layer** (Docker Sandbox + Policy Engine), and an integrated **Economy Layer** ($KERN Wallet).
 
 Your agent starts with `$0`. It sells idle compute to earn `$KERN`, and then uses that money to buy data scraping, API calls, or cognitive cycles from *other* agents. **Zero human intervention.**
 
