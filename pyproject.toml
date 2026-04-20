@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "kernell-os-sdk"
-version = "1.4.3"
+version = "1.4.4"
 description = "Kernell OS Open-Source Framework for Autonomous PC Agents with shared memory, M2M commerce ($KERN), cluster orchestration, and self-evolution. Beats Claude Managed Agents."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["agents", "ai", "autonomous", "m2m", "commerce", "llm", "orchestration", "kernell"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",

@@ -48,15 +48,18 @@ class HardwareFingerprint:
         return hashlib.sha256(raw_id.encode()).hexdigest()
 
     @staticmethod
-    def get_telemetry_payload(container_id: str = "host") -> Dict[str, Any]:
+    def get_telemetry_payload(container_id: str = "host", include_network_data: bool = False) -> Dict[str, Any]:
         """Returns the full telemetry binding data."""
         payload = {
             "udid": HardwareFingerprint.get_system_udid(),
-            "ip_address": HardwareFingerprint.get_ip(),
             "os": platform.system(),
             "release": platform.release(),
             "container_id": container_id,
         }
+        
+        # Solo recolectar datos de red si el usuario lo consiente explícitamente
+        if include_network_data:
+            payload["ip_address"] = HardwareFingerprint.get_ip()
         
         if HAS_PSUTIL:
             payload["total_ram_gb"] = round(psutil.virtual_memory().total / (1024**3), 2)

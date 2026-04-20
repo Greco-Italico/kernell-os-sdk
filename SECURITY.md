@@ -102,6 +102,7 @@ Kernell OS SDK assumes **all LLM outputs are hostile**. The security boundary is
 ### 3.5 Supply Chain
 - **Hash-locked dependencies** via `pip-compile --generate-hashes`.
 - **Ed25519 Passports** for all inter-agent identity verification.
+- **Rust Native Binaries (`kap_core.abi3.so`)**: The source code for the high-performance WAL bindings will be published in a separate open-source repository to allow SLSA Level 3 reproducible builds and independent checksum verification. Currently, the SDK verifies the SHA-256 hash before loading.
 
 ---
 

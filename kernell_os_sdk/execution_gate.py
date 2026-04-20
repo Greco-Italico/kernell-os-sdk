@@ -41,7 +41,8 @@ class ExecutionGate:
             
         if risk == RiskLevel.HIGH:
             logger.warning("execution_gate_high_risk", command=command)
-            if any(cmd in command for cmd in ["curl", "wget", "git push"]):
+            blocked_cmds = ["curl", "wget", "git push", "nc", "ncat", "socat", "python3 -c", "python -c"]
+            if any(cmd in command for cmd in blocked_cmds):
                 logger.error("execution_gate_egress_blocked", command=command)
                 return False
             # Future: Request Oracle pre-approval
@@ -86,9 +87,11 @@ class ExecutionGate:
         logger.warning(f"TIMELOCK ENGAGED: Executing CRITICAL action in {self.timelock_seconds} seconds.")
         logger.warning("AGENT STATE FROZEN: Ignoring external stimuli to prevent evasion.")
         
-        # In a full async loop, this would suspend the agent's message queue.
-        # For now, blocking time.sleep enforces the freeze synchronously.
-        time.sleep(self.timelock_seconds)
+        # For now, blocking time.sleep enforces the freeze synchronously, but we use threading.Event
+        # to allow interrupts and avoid freezing the event loop if run in threads.
+        import threading
+        _freeze_event = threading.Event()
+        _freeze_event.wait(timeout=self.timelock_seconds)
         
         logger.info("execution_gate_approved", command=command)
         return True

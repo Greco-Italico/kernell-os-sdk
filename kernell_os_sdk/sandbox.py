@@ -84,6 +84,36 @@ class Sandbox:
         self.permissions = permissions
         self.container_name = f"kernell_agent_{self.agent_id}"
 
+    def _validate_mount_path(self, path: str) -> None:
+        """Validates a host path before mounting it in the container."""
+        import os
+        from pathlib import Path
+
+        # Null byte injection
+        if '\x00' in path:
+            raise ValueError(f"Null byte in path: {path!r}")
+
+        # URL encoding traversal
+        from urllib.parse import unquote
+        decoded = unquote(path)
+
+        resolved = Path(decoded).resolve()
+
+        forbidden_prefixes = [
+            "/etc", "/root", "/var", "/sys",
+            "/dev", "/boot", "/usr/lib", "/proc"
+        ]
+        forbidden_files = ["/var/run/docker.sock"]
+
+        if str(resolved) == "/":
+            raise PermissionError("Mounting root filesystem is forbidden")
+
+        if any(str(resolved).startswith(p) for p in forbidden_prefixes):
+            raise PermissionError(f"Mounting path {resolved} is forbidden")
+
+        if str(resolved) in forbidden_files:
+            raise PermissionError(f"Mounting {resolved} is explicitly blocked")
+
     def _build_docker_args(self) -> List[str]:
         args = [
             "docker", "run", "-d",
@@ -116,13 +146,14 @@ class Sandbox:
         if self.permissions.file_system_read or self.permissions.file_system_write:
             mode = "rw" if self.permissions.file_system_write else "ro"
             for host_path in self.permissions.allowed_paths:
+                try:
+                    self._validate_mount_path(host_path)
+                except Exception as e:
+                    logger.error(f"SECURITY: Refused to mount sensitive host path: {host_path} - {e}")
+                    continue
+                
                 resolved_path = Path(host_path).resolve()
                 host_path_str = str(resolved_path)
-                
-                # Strict safety check against path traversal and sensitive mounts
-                forbidden_prefixes = ["/etc", "/root", "/var", "/sys", "/dev", "/boot", "/usr/lib"]
-                if host_path_str == "/" or host_path_str == "" or any(host_path_str.startswith(p) for p in forbidden_prefixes) or "docker.sock" in host_path_str:
-                    logger.error(f"SECURITY: Refused to mount sensitive host path: {host_path_str}")
                     continue
                 
                 container_path = f"/workspace/{resolved_path.name}"

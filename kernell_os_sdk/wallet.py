@@ -52,12 +52,27 @@ class Wallet:
     """
 
     def __init__(self, config: Optional[KernellConfig] = None):
+        import threading
         self.config = config or default_config
         self._client = httpx.Client(
             base_url=self.config.gateway_url,
             headers={"Authorization": f"Bearer {self.config.api_key}"},
             timeout=REQUEST_TIMEOUT,
         )
+        self._balance_lock = threading.Lock()
+        self._local_balance: float = 0.0
+
+    def credit(self, amount: float) -> float:
+        with self._balance_lock:
+            self._local_balance += amount
+            return self._local_balance
+
+    def debit(self, amount: float) -> bool:
+        with self._balance_lock:
+            if self._local_balance < amount:
+                return False
+            self._local_balance -= amount
+            return True
 
     @retry(
         stop=stop_after_attempt(3),

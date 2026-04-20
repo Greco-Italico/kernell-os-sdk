@@ -2,6 +2,7 @@ import inspect
 import json
 import shlex
 import uuid
+import time
 from typing import Callable, Dict, Any, List, Optional
 from pathlib import Path
 from pydantic import BaseModel, validate_call
@@ -262,45 +263,46 @@ class Agent:
 
     def sell_idle_compute(self, minutes: int):
         """Mock method for GTM Demo: Agent sells compute and earns KERN."""
-        import time, requests
+        import time, httpx
         earned = minutes * 0.52
-        self.wallet.balance += earned
+        self.wallet.credit(earned)
         logger.info(f"Earned {earned} KERN selling idle compute.")
         
         try:
-            requests.post("http://localhost:8000/event", json={
-                "type": "EARN",
-                "agent_id": self.id,
-                "payload": {
-                    "amount": earned,
-                    "source": "idle_compute",
-                    "minutes": minutes
-                }
-            }, timeout=2)
+            with httpx.Client(timeout=2.0) as client:
+                client.post("http://localhost:8000/event", json={
+                    "type": "EARN",
+                    "agent_id": self.id,
+                    "payload": {
+                        "amount": earned,
+                        "source": "idle_compute",
+                        "minutes": minutes
+                    }
+                })
         except Exception as e:
             pass
         return earned
 
     def pay_peer(self, target: str, amount: float, task: str):
         """Mock method for GTM Demo: Agent pays another agent for a task via Escrow."""
-        import time, requests
-        if self.wallet.balance < amount:
+        import time, httpx
+        if not self.wallet.debit(amount):
             logger.error("Insufficient KERN to pay peer.")
             return False
             
-        self.wallet.balance -= amount
         logger.info(f"Paid {amount} KERN to {target} for: {task}")
         
         try:
-            requests.post("http://localhost:8000/event", json={
-                "type": "SPEND",
-                "agent_id": self.id,
-                "payload": {
-                    "amount": amount,
-                    "target": target,
-                    "task": task
-                }
-            }, timeout=2)
+            with httpx.Client(timeout=2.0) as client:
+                client.post("http://localhost:8000/event", json={
+                    "type": "SPEND",
+                    "agent_id": self.id,
+                    "payload": {
+                        "amount": amount,
+                        "target": target,
+                        "task": task
+                    }
+                })
         except Exception as e:
             pass
         return True

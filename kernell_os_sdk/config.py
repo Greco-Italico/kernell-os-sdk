@@ -23,10 +23,20 @@ class KernellConfig(BaseModel):
     @classmethod
     def validate_gateway_url(cls, v: str) -> str:
         from urllib.parse import urlparse
-        allowed_hosts = ["api.kernell.site", "localhost", "127.0.0.1"]
+        import os
         parsed = urlparse(v)
-        if parsed.hostname not in allowed_hosts:
-            raise ValueError("SSRF Protection: gateway_url must be an approved Kernell domain or localhost.")
+        
+        # Producción: SOLO el dominio oficial
+        if os.getenv("KERNELL_ENV", "development") == "production":
+            if parsed.hostname != "api.kernell.site":
+                raise ValueError("Production only allows api.kernell.site")
+            if parsed.scheme != "https":
+                raise ValueError("Production requires HTTPS")
+        else:
+            # Desarrollo: localhost permitido pero documentado
+            allowed_hosts = ["api.kernell.site", "localhost", "127.0.0.1"]
+            if parsed.hostname not in allowed_hosts:
+                raise ValueError(f"SSRF: hostname '{parsed.hostname}' no permitido")
         return v
         
     redis_url: Optional[str] = Field(default_factory=lambda: os.getenv("KERNELL_REDIS_URL", None))
