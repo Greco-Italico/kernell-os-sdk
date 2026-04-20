@@ -29,6 +29,7 @@ def _verify_image_integrity() -> bool:
     Verifica que la imagen Docker local coincide con el digest esperado.
     Llama esto antes de start() para detectar imágenes comprometidas.
     """
+    assert "REEMPLAZAR" not in AGENT_BASE_IMAGE, "Falta pin de SHA256 para Docker (KOS-015)"
     try:
         result = subprocess.run(
             ["docker", "inspect", "--format={{index .RepoDigests 0}}", AGENT_BASE_IMAGE_TAG],

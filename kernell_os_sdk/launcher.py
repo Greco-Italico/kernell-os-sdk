@@ -7,6 +7,10 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import subprocess
 from pathlib import Path
+import secrets
+
+SETUP_TOKEN = secrets.token_urlsafe(16)
+TOKEN_USED = False
 
 def write_secure_env_file(env_vars: dict[str, str], path: str = ".env") -> Path:
     import os
@@ -147,6 +151,9 @@ def serve_wizard():
                 <small>Detected 24GB VRAM. Recommended Engine: Gemma 4 Q8</small>
             </div>
             
+            <label>Setup Token (from console)</label>
+            <input type="password" id="setupToken" placeholder="Paste token here..." />
+
             <label>Swarm Name</label>
             <input type="text" id="swarmName" value="genesis_swarm" />
             
@@ -204,7 +211,10 @@ def serve_wizard():
                 
                 const resp = await fetch('/api/setup', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Setup-Token': document.getElementById('setupToken').value
+                    },
                     body: JSON.stringify({
                         swarm_name: document.getElementById('swarmName').value,
                         github_user: document.getElementById('githubUser').value,
@@ -229,13 +239,25 @@ def serve_wizard():
 
 def _write_secret_file(path: str, content: str) -> None:
     """Escribe un archivo con permisos 600 (solo el dueño puede leer/escribir)."""
+    import stat
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(content, encoding="utf-8")
-    os.chmod(str(p), 0o600)
+    flags = os.O_CREAT | os.O_WRONLY | os.O_TRUNC
+    mode = stat.S_IRUSR | stat.S_IWUSR
+    fd = os.open(str(p), flags, mode)
+    try:
+        os.write(fd, content.encode("utf-8"))
+    finally:
+        os.close(fd)
 
 @app.post("/api/setup")
-def handle_setup(data: SetupData):
+def handle_setup(data: SetupData, request: Request):
+    global TOKEN_USED
+    token = request.headers.get("X-Setup-Token")
+    if TOKEN_USED or token != SETUP_TOKEN:
+        raise HTTPException(403, "Invalid or already used setup token")
+    TOKEN_USED = True
+    
     import secrets
     
     private_key_hex = ""
@@ -284,7 +306,14 @@ KERNELL_VOLATILE_ADDRESS={volatile_address}
             f.write(gitignore_entries)
             
     # Generar y ejecutar main.py
-    main_content = f"""import os
+    import re
+    def _safe_name(v: str) -> str:
+        if not re.fullmatch(r'[a-zA-Z0-9_\-]{1,64}', v):
+            raise HTTPException(422, f"Valor inválido: {v[:30]!r}")
+        return v
+
+    MAIN_TEMPLATE = """\
+import os
 from dotenv import load_dotenv
 from kernell_os_sdk import Agent, AgentPermissions
 from kernell_os_sdk.llm import LLMRouter, OllamaProvider, AnthropicProvider
@@ -294,9 +323,9 @@ load_dotenv()
 
 def main():
     print("🚀 Booting Kernell OS Infrastructure...")
-    print(f"🤖 Swarm Name: {data.swarm_name}")
+    print(f"🤖 Swarm Name: {swarm_name}")
     
-    if {data.enable_kernell_pay}:
+    if {enable_pay}:
         print("💳 Kernell Pay: L1+L2 Dual Wallet Enabled")
         print("   -> L1 Deposit Address (Fund via Phantom): {public_address}")
         print("   -> L2 Volatile Address (Zero-Fee micro-tx): {volatile_address}")
@@ -304,7 +333,7 @@ def main():
     else:
         print("💳 Kernell Pay: Disabled")
     
-    local = OllamaProvider(model="{data.local_model}")
+    local = OllamaProvider(model={local_model})
     cloud = AnthropicProvider(model="claude-3-5-sonnet-20241022")
     router = LLMRouter(local_provider=local, cloud_provider=cloud, cloud_threshold="hard")
     director = Agent(name="Swarm Director", engine=router, permissions=AgentPermissions(network_access=True))
@@ -318,7 +347,15 @@ def main():
 if __name__ == "__main__":
     main()
 """
-    _write_secret_file("main.py", main_content)
+
+    content = MAIN_TEMPLATE.format(
+        swarm_name=repr(_safe_name(data.swarm_name)),
+        enable_pay=repr(bool(data.enable_kernell_pay)),
+        public_address=repr(public_address),
+        volatile_address=repr(volatile_address),
+        local_model=repr(_safe_name(data.local_model))
+    )
+    _write_secret_file("main.py", content)
         
     subprocess.Popen([sys.executable, "main.py"])
     return {"status": "success"}
@@ -329,6 +366,7 @@ def run_launcher():
         print("=" * 60)
         print("  KERNELL OS — WEB SETUP WIZARD")
         print("  ⚠️  Accesible SOLO desde esta máquina (localhost)")
+        print(f"  🔑  SETUP TOKEN: {SETUP_TOKEN}")
         print("  🌐  Abre: http://localhost:3000")
         print("=" * 60)
         uvicorn.run(

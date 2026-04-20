@@ -35,6 +35,17 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 from cryptography.fernet import Fernet
 
+def write_secret_bytes(path: Path, data: bytes) -> None:
+    import stat
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_CREAT | os.O_WRONLY | os.O_TRUNC
+    mode = stat.S_IRUSR | stat.S_IWUSR
+    fd = os.open(str(path), flags, mode)
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+
 def _get_machine_secret() -> str:
     """Retrieve or generate a high-entropy secret bound to this machine."""
     secret_path = Path.home() / ".kernell" / ".machine_secret"
@@ -44,9 +55,7 @@ def _get_machine_secret() -> str:
     # Generate a cryptographically secure random secret
     import secrets
     secret = secrets.token_hex(32)
-    secret_path.parent.mkdir(parents=True, exist_ok=True)
-    secret_path.write_text(secret)
-    os.chmod(str(secret_path), 0o600)
+    write_secret_bytes(secret_path, secret.encode())
     return secret
 
 def _get_or_create_salt(storage_dir: Path) -> bytes:
@@ -60,9 +69,7 @@ def _get_or_create_salt(storage_dir: Path) -> bytes:
 
     # Generar 32 bytes de entropía criptográfica
     salt = os.urandom(32)
-    storage_dir.mkdir(parents=True, exist_ok=True)
-    salt_path.write_bytes(salt)
-    os.chmod(str(salt_path), 0o600)
+    write_secret_bytes(salt_path, salt)
     return salt
 
 # Derive a Fernet key from a passphrase (or machine-specific secret)
@@ -137,8 +144,12 @@ class AgentPassport:
 
 def _compute_passport_hmac(passport_json: str, private_key_hex: str) -> str:
     """Compute HMAC-SHA256 of the passport JSON for integrity verification."""
+    from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    from cryptography.hazmat.primitives import hashes
+    hkdf = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"passport_hmac")
+    hmac_key = hkdf.derive(bytes.fromhex(private_key_hex))
     return hmac_module.new(
-        bytes.fromhex(private_key_hex[:64]),  # Use first 32 bytes as HMAC key
+        hmac_key,
         passport_json.encode(),
         hashlib.sha256
     ).hexdigest()
@@ -230,14 +241,12 @@ def create_passport(
         # Save HMAC signature for integrity verification
         hmac_sig = _compute_passport_hmac(passport_json, private_hex)
         sig_path = storage_dir / ".passport_sig"
-        sig_path.write_text(hmac_sig)
-        os.chmod(str(sig_path), 0o600)
+        write_secret_bytes(sig_path, hmac_sig.encode())
 
         # Encrypt private key at rest (bound to this machine's UDID)
         encrypted_key = _encrypt_private_key(private_hex, storage_dir)
         key_path = storage_dir / ".private_key.enc"
-        key_path.write_bytes(encrypted_key)
-        os.chmod(str(key_path), 0o600)
+        write_secret_bytes(key_path, encrypted_key)
 
         # Remove any old plaintext key files
         old_plaintext = storage_dir / ".private_key"
@@ -313,8 +322,7 @@ def load_private_key(storage_dir: Path) -> Optional[str]:
         private_hex = old_path.read_text().strip()
         # Migrate to encrypted storage
         encrypted = _encrypt_private_key(private_hex, Path(storage_dir))
-        key_path.write_bytes(encrypted)
-        os.chmod(str(key_path), 0o600)
+        write_secret_bytes(key_path, encrypted)
         old_path.unlink()  # Remove plaintext
         return private_hex
     return None

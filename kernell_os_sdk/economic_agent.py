@@ -19,18 +19,21 @@ from kernell_os_sdk.identity import AgentPassport
 
 
 class EconomicAgent:
-    def __init__(self, passport: AgentPassport, api_url: str = "https://api.kernell.site/v1"):
+    def __init__(self, passport: AgentPassport, private_key: str, api_url: str = "https://api.kernell.site/v1"):
         """
         Initializes an Economic Agent capable of transacting natively on the Kernell L2.
         """
         self.passport = passport
+        self._private_key = private_key
         self.agent_id = passport.agent_id
         self.api_url = api_url
         self.http = httpx.Client(timeout=10.0)
 
     def _sign_payload(self, payload: dict) -> dict:
         """Automatically injects identity signatures to bypass Stripe/Banking friction."""
-        signature = self.passport.sign_message(payload)
+        from kernell_os_sdk.identity import sign_message
+        import json
+        signature = sign_message(json.dumps(payload, sort_keys=True), self._private_key)
         return {"payload": payload, "signature": signature, "agent_id": self.agent_id}
 
     # ─── Risk & Counterparty Intelligence ───────────────────────────

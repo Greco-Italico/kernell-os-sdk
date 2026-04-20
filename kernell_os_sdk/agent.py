@@ -235,9 +235,13 @@ class Agent:
             from nacl.encoding import Base64Encoder
 
             # Sign payload + sensitivity
-            signing_key = load_private_key(self._private_key)
+            if not self._private_key:
+                return "Error: clave privada no disponible. No se puede firmar."
+
+            import binascii
             raw_msg = f"{target_id}:{payload}:{msg_sensitivity.value}:{time.time()}".encode()
-            signature = signing_key.sign(raw_msg).signature
+            sk = SigningKey(binascii.unhexlify(self._private_key))
+            signature = sk.sign(raw_msg).signature
 
             # Build A2A Message
             msg = A2AMessage(

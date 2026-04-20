@@ -22,8 +22,10 @@ class KernellConfig(BaseModel):
     @field_validator("gateway_url")
     @classmethod
     def validate_gateway_url(cls, v: str) -> str:
-        allowed_domains = ["https://api.kernell.site", "http://localhost", "http://127.0.0.1"]
-        if not any(v.startswith(domain) for domain in allowed_domains):
+        from urllib.parse import urlparse
+        allowed_hosts = ["api.kernell.site", "localhost", "127.0.0.1"]
+        parsed = urlparse(v)
+        if parsed.hostname not in allowed_hosts:
             raise ValueError("SSRF Protection: gateway_url must be an approved Kernell domain or localhost.")
         return v
         

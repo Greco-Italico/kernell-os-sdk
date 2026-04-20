@@ -41,6 +41,9 @@ class ExecutionGate:
             
         if risk == RiskLevel.HIGH:
             logger.warning("execution_gate_high_risk", command=command)
+            if any(cmd in command for cmd in ["curl", "wget", "git push"]):
+                logger.error("execution_gate_egress_blocked", command=command)
+                return False
             # Future: Request Oracle pre-approval
             return True
             
