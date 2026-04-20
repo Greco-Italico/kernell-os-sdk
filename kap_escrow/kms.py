@@ -84,6 +84,14 @@ class ExternalKMS(KMSProvider):
     """
 
     def __init__(self, endpoint: str = "http://127.0.0.1:8200/v1/transit", key_name: str = "kap-agent"):
+        from urllib.parse import urlparse
+        _ALLOWED_KMS_HOSTS = {"127.0.0.1", "localhost", "vault.kernell.internal"}
+        parsed = urlparse(endpoint)
+        if parsed.hostname not in _ALLOWED_KMS_HOSTS:
+            raise ValueError(
+                f"SSRF Protection: KMS endpoint hostname '{parsed.hostname}' "
+                f"not in allowed list: {_ALLOWED_KMS_HOSTS}"
+            )
         self._endpoint = endpoint.rstrip("/")
         self._key_name = key_name
         self._cached_pubkey: bytes | None = None

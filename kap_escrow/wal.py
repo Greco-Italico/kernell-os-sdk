@@ -11,11 +11,6 @@ from typing import Any, Dict, List, Tuple
 
 logger = logging.getLogger("KAP_WAL")
 
-try:
-    from kap_escrow.kap_core import RustTransactionWAL
-except ImportError as e:
-    raise RuntimeError("HFT Error: kap_core Rust module not found. You must compile the bindings with Maturin.") from e
-
 import hashlib
 
 EXPECTED_KAP_CORE_HASH = "101b2890ba6b8038c89811504e83db84f5fe65a6c669c9b5f157c2d24e323486"
@@ -29,7 +24,13 @@ def _verify_binary():
     if h != EXPECTED_KAP_CORE_HASH:
         raise RuntimeError("Binary tampered: kap_core.abi3.so hash mismatch")
 
+# KOS-022: Verify BEFORE import — tampered binary never gets to execute
 _verify_binary()
+
+try:
+    from kap_escrow.kap_core import RustTransactionWAL
+except ImportError as e:
+    raise RuntimeError("HFT Error: kap_core Rust module not found. You must compile the bindings with Maturin.") from e
 
 class TransactionWAL:
     """Zero-Copy Write-Ahead Log delegated to Rust via PyO3.

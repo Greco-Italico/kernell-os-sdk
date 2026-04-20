@@ -1,4 +1,5 @@
 import subprocess
+import shlex
 from typing import Dict, Any
 from .base import BaseAdapter
 import structlog
@@ -18,21 +19,29 @@ class OpenInterpreterAdapter(BaseAdapter):
     def execute(self, task: str, context: Dict[str, Any]) -> Dict[str, Any]:
         logger.info("interpreter_executing", task=task[:50])
         
-        # En una integración completa, aquí usaríamos un LLM para compilar la tarea
-        # en un script de bash/python. Por ahora, asumimos que 'task' es un comando.
-        
-        # Validar en PolicyEngine si está disponible en context
+        # PolicyEngine is MANDATORY — never execute without validation
         policy_engine = context.get("policy_engine")
-        if policy_engine:
-            val = policy_engine.validate(task)
-            if not val.allowed:
-                return {"status": "error", "reason": f"PolicyEngine Denied: {val.reason}"}
+        if not policy_engine:
+            logger.error("interpreter_no_policy_engine")
+            return {"status": "error", "reason": "PolicyEngine requerida en contexto — ejecución denegada"}
+
+        val = policy_engine.validate(task)
+        if not val.allowed:
+            return {"status": "error", "reason": f"PolicyEngine Denied: {val.reason}"}
 
         # Ejecutar en Sandbox
         try:
             container = self.sandbox.container_name
-            # Para mayor seguridad, nunca se usa shell=True
-            args = ["docker", "exec", "--", container, "bash", "-c", task]
+
+            # Never pass task as a raw string to bash -c — use shlex.split
+            # to tokenize the command into safe arguments
+            try:
+                cmd_parts = shlex.split(task)
+            except ValueError as e:
+                return {"status": "error", "reason": f"Comando malformado: {e}"}
+
+            # Execute without bash -c — each argument is passed individually
+            args = ["docker", "exec", "--", container] + cmd_parts
             res = subprocess.run(
                 args,
                 shell=False,
