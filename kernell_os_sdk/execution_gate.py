@@ -16,6 +16,7 @@ logger = structlog.get_logger("kernell.execution_gate")
 class ApprovalSignature(BaseModel):
     signer_id: str
     signer_role: str = "agent"  # 'agent', 'human', 'oracle'
+    public_key_hex: str         # Required for crypto verification
     signature: bytes
     timestamp: float
 
@@ -81,6 +82,17 @@ class ExecutionGate:
         for sig in sigs:
             if now - sig.timestamp > 300:  # Signatures valid for 5 minutes
                 logger.error("execution_gate_signature_expired", signer=sig.signer_id)
+                return False
+                
+            # KOS-C04: Cryptographic Verification Enforced
+            if len(sig.signature) != 64:
+                logger.error("execution_gate_invalid_signature_length", signer=sig.signer_id)
+                return False
+                
+            from .identity import verify_signature
+            payload = f"{command}:{sig.timestamp}"
+            if not verify_signature(payload, sig.signature.hex(), sig.public_key_hex):
+                logger.error("execution_gate_invalid_signature", signer=sig.signer_id)
                 return False
 
         # Apply Time-Lock Delay & Freeze State

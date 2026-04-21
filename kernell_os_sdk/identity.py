@@ -33,6 +33,7 @@ from typing import Optional, Tuple
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.fernet import Fernet
 
 def write_secret_bytes(path: Path, data: bytes) -> None:
@@ -72,16 +73,15 @@ def _get_or_create_salt(storage_dir: Path) -> bytes:
     write_secret_bytes(salt_path, salt)
     return salt
 
-# Derive a Fernet key from a passphrase (or machine-specific secret)
-def _derive_fernet_key(storage_dir: Path) -> bytes:
+# Derive a key from a passphrase (or machine-specific secret)
+def _derive_encryption_key(storage_dir: Path) -> bytes:
     """
-    Derives a Fernet encryption key from a machine-specific secret.
+    Derives an AES-256-GCM encryption key from a machine-specific secret.
     Uses a highly secure, randomly generated machine secret.
     """
     machine_secret = _get_machine_secret()
     salt = _get_or_create_salt(storage_dir)
-    raw = hashlib.pbkdf2_hmac("sha256", machine_secret.encode("utf-8"), salt, 200_000, dklen=32)
-    return base64.urlsafe_b64encode(raw)
+    return hashlib.pbkdf2_hmac("sha256", machine_secret.encode("utf-8"), salt, 200_000, dklen=32)
 
 
 # Allowed fields for AgentPassport — used to reject unknown fields
@@ -171,15 +171,33 @@ def _generate_keypair() -> Tuple[str, str]:
 
 
 def _encrypt_private_key(private_hex: str, storage_dir: Path) -> bytes:
-    """Encrypt the private key using Fernet (AES) bound to this machine."""
-    fernet = Fernet(_derive_fernet_key(storage_dir))
-    return fernet.encrypt(private_hex.encode())
+    """Encrypt the private key using AES-256-GCM bound to this machine."""
+    key = _derive_encryption_key(storage_dir)
+    aesgcm = AESGCM(key)
+    nonce = os.urandom(12)
+    ct = aesgcm.encrypt(nonce, private_hex.encode(), None)
+    return nonce + ct
 
+
+class LegacyEncryptionDetected(Exception):
+    pass
 
 def _decrypt_private_key(encrypted_data: bytes, storage_dir: Path) -> str:
-    """Decrypt the private key. Will FAIL if run on a different machine (different UDID)."""
-    fernet = Fernet(_derive_fernet_key(storage_dir))
-    return fernet.decrypt(encrypted_data).decode()
+    """Decrypt the private key, supporting fallback to Fernet for migration."""
+    # Heuristics: Fernet tokens are base64, so they start with "gAAAAA".
+    # AES-GCM starts with a binary nonce (12 bytes).
+    if encrypted_data.startswith(b"gAAAAA"):
+        raise LegacyEncryptionDetected()
+        
+    key = _derive_encryption_key(storage_dir)
+    from cryptography.exceptions import InvalidTag
+    try:
+        aesgcm = AESGCM(key)
+        nonce = encrypted_data[:12]
+        ct = encrypted_data[12:]
+        return aesgcm.decrypt(nonce, ct, None).decode()
+    except InvalidTag:
+        raise SecurityError("Failed to decrypt private key: Invalid tag or modified ciphertext")
 
 
 def create_passport(
@@ -315,7 +333,22 @@ def load_private_key(storage_dir: Path) -> Optional[str]:
     """Load and decrypt the private key from disk."""
     key_path = Path(storage_dir) / ".private_key.enc"
     if key_path.exists():
-        return _decrypt_private_key(key_path.read_bytes(), Path(storage_dir))
+        data = key_path.read_bytes()
+        try:
+            return _decrypt_private_key(data, Path(storage_dir))
+        except LegacyEncryptionDetected:
+            # Migrate Fernet to AES-GCM
+            machine_secret = _get_machine_secret()
+            salt = _get_or_create_salt(Path(storage_dir))
+            raw = hashlib.pbkdf2_hmac("sha256", machine_secret.encode("utf-8"), salt, 200_000, dklen=32)
+            fernet_key = base64.urlsafe_b64encode(raw)
+            fernet = Fernet(fernet_key)
+            private_hex = fernet.decrypt(data).decode()
+            
+            # Re-encrypt and save with AES-GCM
+            encrypted = _encrypt_private_key(private_hex, Path(storage_dir))
+            write_secret_bytes(key_path, encrypted)
+            return private_hex
     # Legacy fallback: check for unencrypted key and migrate
     old_path = Path(storage_dir) / ".private_key"
     if old_path.exists():

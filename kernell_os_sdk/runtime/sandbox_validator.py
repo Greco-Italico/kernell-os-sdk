@@ -138,6 +138,7 @@ FORBIDDEN_DUNDER_ATTRS: frozenset[str] = frozenset({
     "__loader__",
     "__spec__",
     "__import__",
+    "__class__",
 })
 
 # Dunders PERMITIDOS explícitamente (whitelist para uso en visit_Attribute).
@@ -159,7 +160,6 @@ ALLOWED_DUNDER_ATTRS: frozenset[str] = frozenset({
     "__aenter__", "__aexit__",
     # Atributos de instancia comunes (no peligrosos)
     "__name__", "__doc__", "__module__", "__qualname__", "__dict__",
-    "__class__",    # permitido en expresiones simples: type(x).__class__
     "__slots__", "__weakref__", "__annotations__",
     # Dataclasses / attrs
     "__dataclass_fields__", "__dataclass_params__",
