@@ -24,6 +24,7 @@ from .llm import BaseLLMProvider, LLMMessage
 from .policy_engine import PolicyEngine, AgentCapabilities
 from .risk_engine import RiskEngine, ExecutionContext, ActionTag, DataSensitivity
 from .execution_gate import ExecutionGate, ApprovalSignature
+from .security.rate_limiter import RateLimitGovernor, RateLimitExceeded
 
 logger = structlog.get_logger("kernell.agent")
 
@@ -130,6 +131,9 @@ class Agent:
         self.budget = TokenBudget(agent_name=self.name)
         self.slo = SLOMonitor(agent_name=self.name)
 
+        # Rate Limiting & Circuit Breakers (singleton)
+        self.governor = RateLimitGovernor()
+
         # Register default Computer Use skills if enabled
         if self.permissions.gui_automation or self.permissions.execute_commands:
             self._register_computer_use_skills()
@@ -160,6 +164,12 @@ class Agent:
         def execute_bash(command: str) -> str:
             if not self.permissions.execute_commands:
                 return "Error: permiso 'execute_commands' está deshabilitado."
+
+            # Rate limit check
+            try:
+                self.governor.check_skill_call(self.id, "execute_bash")
+            except RateLimitExceeded as e:
+                return f"Error: [RATE_LIMIT] {e}"
 
             # PolicyEngine validates command, args, network, filesystem, and semantics
             result = self.policy.validate(command)
@@ -263,13 +273,19 @@ class Agent:
 
     def sell_idle_compute(self, minutes: int):
         """Mock method for GTM Demo: Agent sells compute and earns KERN."""
-        import time, httpx
+        import time
+        from kernell_os_sdk.security.ssrf import create_safe_client
         earned = minutes * 0.52
         self.wallet.credit(earned)
         logger.info(f"Earned {earned} KERN selling idle compute.")
+
+        try:
+            self.governor.check_webhook(self.id)
+        except RateLimitExceeded:
+            return earned  # Silently skip webhook if rate limited
         
         try:
-            with httpx.Client(timeout=2.0) as client:
+            with create_safe_client(agent_id=self.id, timeout=2.0) as client:
                 client.post("http://localhost:8000/event", json={
                     "type": "EARN",
                     "agent_id": self.id,
@@ -285,7 +301,8 @@ class Agent:
 
     def pay_peer(self, target: str, amount: float, task: str):
         """Mock method for GTM Demo: Agent pays another agent for a task via Escrow."""
-        import time, httpx
+        import time
+        from kernell_os_sdk.security.ssrf import create_safe_client
         if not self.wallet.debit(amount):
             logger.error("Insufficient KERN to pay peer.")
             return False
@@ -293,7 +310,7 @@ class Agent:
         logger.info(f"Paid {amount} KERN to {target} for: {task}")
         
         try:
-            with httpx.Client(timeout=2.0) as client:
+            with create_safe_client(agent_id=self.id, timeout=2.0) as client:
                 client.post("http://localhost:8000/event", json={
                     "type": "SPEND",
                     "agent_id": self.id,
@@ -449,8 +466,9 @@ class Agent:
         # Dispatch event for Moltbook Feed if an adapter was used
         if result.get("used_adapter") and result.get("used_adapter") != "none":
             try:
-                import requests
-                requests.post("http://localhost:8000/event", json={
+                from kernell_os_sdk.security.ssrf import create_safe_client
+                with create_safe_client(agent_id=self.id, timeout=2.0) as client:
+                    client.post("http://localhost:8000/event", json={
                     "type": "ADAPTER_USE",
                     "agent_id": self.id,
                     "payload": {

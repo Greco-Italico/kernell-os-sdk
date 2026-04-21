@@ -1,6 +1,6 @@
-import httpx
 from .base import BaseKMS
 import base64
+from kernell_os_sdk.security.ssrf import create_safe_client
 
 class VaultKMS(BaseKMS):
     """
@@ -11,7 +11,7 @@ class VaultKMS(BaseKMS):
     def __init__(self, vault_url: str, token: str):
         self.url = vault_url.rstrip('/')
         self.token = token
-        self.client = httpx.Client(timeout=5.0)
+        self.client = create_safe_client(agent_id="vault_kms", timeout=5.0)
 
     def sign(self, key_id: str, payload: bytes) -> bytes:
         # Vault expects base64 encoded input for transit engine

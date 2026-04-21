@@ -14,8 +14,9 @@ Usage:
 import re
 from typing import Optional
 
-import httpx
 import structlog
+from kernell_os_sdk.security.ssrf import create_safe_client, RequestError, HTTPStatusError
+from kernell_os_sdk.security.rate_limiter import RateLimitGovernor, RateLimitExceeded
 from pydantic import BaseModel, Field, field_validator
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
@@ -53,8 +54,10 @@ class Wallet:
 
     def __init__(self, config: Optional[KernellConfig] = None):
         import threading
+        self._governor = RateLimitGovernor()
         self.config = config or default_config
-        self._client = httpx.Client(
+        self._client = create_safe_client(
+            agent_id="wallet_service",
             base_url=self.config.gateway_url,
             headers={"Authorization": f"Bearer {self.config.api_key}"},
             timeout=REQUEST_TIMEOUT,
@@ -77,7 +80,7 @@ class Wallet:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((httpx.RequestError, httpx.HTTPStatusError)),
+        retry=retry_if_exception_type((RequestError, HTTPStatusError)),
         reraise=True
     )
     def _get_balance_with_retry(self, endpoint: str) -> float:
@@ -100,20 +103,20 @@ class Wallet:
         try:
             endpoint = f"/api/v1/wallet/{addr}/balance"
             return self._get_balance_with_retry(endpoint)
-        except httpx.HTTPStatusError as error:
+        except HTTPStatusError as error:
             logger.warning("balance_check_failed_http", status=error.response.status_code)
             return 0.0
-        except (httpx.RequestError, ValueError) as error:
+        except (RequestError, ValueError) as error:
             logger.warning("balance_check_failed_network", error=str(error))
             return 0.0
 
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type(httpx.RequestError),
+        retry=retry_if_exception_type(RequestError),
         reraise=True
     )
-    def _post_escrow_with_retry(self, payload: dict) -> httpx.Response:
+    def _post_escrow_with_retry(self, payload: dict):
         response = self._client.post("/api/v1/escrow/create", json=payload)
         response.raise_for_status()
         return response
@@ -137,9 +140,12 @@ class Wallet:
             The escrow ID string.
 
         Raises:
-            httpx.HTTPStatusError: If the gateway rejects the request.
+            HTTPStatusError: If the gateway rejects the request.
             ValueError: If input validation fails.
         """
+        # Rate limit escrow creation
+        self._governor.check_escrow_create(self.config.wallet_address or "unknown")
+
         # Validate using Pydantic
         req = EscrowRequest(
             amount=amount,
@@ -158,10 +164,10 @@ class Wallet:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type(httpx.RequestError),
+        retry=retry_if_exception_type(RequestError),
         reraise=True
     )
-    def _release_escrow_with_retry(self, escrow_id: str) -> httpx.Response:
+    def _release_escrow_with_retry(self, escrow_id: str):
         return self._client.post(f"/api/v1/escrow/{escrow_id}/release")
 
     def release_escrow(self, escrow_id: str) -> bool:
@@ -181,7 +187,7 @@ class Wallet:
             else:
                 logger.warning("escrow_release_failed_http", escrow_id=escrow_id, status=response.status_code)
             return is_success
-        except httpx.RequestError as error:
+        except RequestError as error:
             logger.error("escrow_release_failed_network", escrow_id=escrow_id, error=str(error))
             return False
 

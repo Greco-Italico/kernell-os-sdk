@@ -42,6 +42,7 @@ _HARDENING_FLAGS: list[str] = [
     "--network=none",                           # sin red
     "--cap-drop=ALL",                           # eliminar TODAS las capabilities
     "--security-opt=no-new-privileges",         # bloquear setuid/setgid
+    f"--security-opt=seccomp={Path(__file__).parent / 'seccomp.json'}",
     "--user=65534:65534",                       # nobody:nogroup
     "--tmpfs=/tmp:rw,noexec,nosuid,size=64m",   # /tmp sin exec
 ]

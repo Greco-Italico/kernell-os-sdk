@@ -2,8 +2,7 @@ import subprocess
 import uuid
 import os
 import time
-import httpx
-
+from kernell_os_sdk.security.ssrf import create_uds_client
 class FirecrackerManager:
     """
     Manager to orchestrate Firecracker MicroVMs.
@@ -32,7 +31,7 @@ class FirecrackerManager:
                 break
             time.sleep(0.05)
 
-        client = httpx.Client(transport=httpx.HTTPTransport(uds=socket_path), timeout=2.0)
+        client = create_uds_client(uds_path=socket_path, timeout=2.0)
 
         try:
             # 2. Configure Machine
@@ -85,7 +84,7 @@ class FirecrackerManager:
         snap_path = os.path.join(snapshot_dir, f"{vm_id}.snap")
         mem_path = os.path.join(snapshot_dir, f"{vm_id}.mem")
         
-        client = httpx.Client(transport=httpx.HTTPTransport(uds=socket_path), timeout=2.0)
+        client = create_uds_client(uds_path=socket_path, timeout=2.0)
         client.put("http://localhost/snapshot/create", json={
             "snapshot_type": "Full",
             "snapshot_path": snap_path,
@@ -110,7 +109,7 @@ class FirecrackerManager:
                 break
             time.sleep(0.05)
 
-        client = httpx.Client(transport=httpx.HTTPTransport(uds=socket_path), timeout=2.0)
+        client = create_uds_client(uds_path=socket_path, timeout=2.0)
         
         try:
             client.put("http://localhost/snapshot/load", json={

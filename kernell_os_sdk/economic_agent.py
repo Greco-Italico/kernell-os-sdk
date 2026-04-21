@@ -11,11 +11,11 @@ the developer simply calls:
   agent.check_counterparty("agent_xyz")
 """
 import uuid
-import httpx
 from decimal import Decimal
 from typing import Dict, Any, Optional
 
 from kernell_os_sdk.identity import AgentPassport
+from kernell_os_sdk.security.ssrf import create_safe_client
 
 
 class EconomicAgent:
@@ -27,7 +27,7 @@ class EconomicAgent:
         self._private_key = private_key
         self.agent_id = passport.agent_id
         self.api_url = api_url
-        self.http = httpx.Client(timeout=10.0)
+        self.http = create_safe_client(agent_id=self.agent_id, timeout=10.0)
 
     def _sign_payload(self, payload: dict) -> dict:
         """Automatically injects identity signatures to bypass Stripe/Banking friction."""

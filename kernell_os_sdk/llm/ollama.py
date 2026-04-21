@@ -4,13 +4,13 @@ Kernell OS SDK — Ollama Provider (Local-First)
 Native connector for Ollama, enabling agents and sub-agents to run
 locally at $0 cost using models like Gemma 4, Llama 3, and Mistral.
 """
-import httpx
 import json
 import logging
 from typing import List, Any, AsyncGenerator
 
 from .base import BaseLLMProvider, LLMResponse, LLMMessage
 from ..token_estimator import estimate_messages_tokens, estimate_tokens
+from ..security.ssrf import create_safe_client, create_safe_async_client, RequestError
 
 logger = logging.getLogger("kernell.llm.ollama")
 
@@ -51,7 +51,7 @@ class OllamaProvider(BaseLLMProvider):
         
         logger.debug(f"Calling Ollama local model: {self.model}")
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with create_safe_client(agent_id=self.model, timeout=self.timeout) as client:
                 response = client.post(url, json=payload)
                 response.raise_for_status()
                 data = response.json()
@@ -88,7 +88,7 @@ class OllamaProvider(BaseLLMProvider):
         }
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with create_safe_async_client(agent_id=self.model, timeout=self.timeout) as client:
                 response = await client.post(url, json=payload)
                 response.raise_for_status()
                 data = response.json()
@@ -124,7 +124,7 @@ class OllamaProvider(BaseLLMProvider):
         }
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with create_safe_async_client(agent_id=self.model, timeout=self.timeout) as client:
                 async with client.stream("POST", url, json=payload) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():

@@ -1,8 +1,8 @@
 import os
 import sys
 import uvicorn
-import httpx
 from fastapi import FastAPI, Request, HTTPException
+from kernell_os_sdk.security.ssrf import create_safe_client, RequestError, TimeoutException
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import subprocess
@@ -64,16 +64,15 @@ def verify_github_star(username: str):
     REPO = "Greco-Italico/kernell-os-sdk"
     url = f"https://api.github.com/users/{username}/starred/{REPO}"
     try:
-        resp = httpx.get(
-            url,
-            headers={
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "kernell-os-sdk-installer",
-            },
-            timeout=8.0,
-            follow_redirects=False,
-        )
+        with create_safe_client(agent_id="launcher_wizard", timeout=8.0) as client:
+            resp = client.get(
+                url,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "kernell-os-sdk-installer",
+                }
+            )
         if resp.status_code == 204:
             return {"starred": True, "message": f"¡Verificado! Gracias por el apoyo, {username}."}
         elif resp.status_code == 404:
@@ -82,10 +81,12 @@ def verify_github_star(username: str):
             raise HTTPException(status_code=503, detail="Error de autenticación con GitHub API.")
         else:
             raise HTTPException(status_code=503, detail=f"GitHub API retornó {resp.status_code}. Intenta de nuevo.")
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=503, detail="Timeout al verificar con GitHub. Revisa tu conexión.")
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=503, detail=f"No se pudo conectar a GitHub: {str(e)[:100]}")
+    except Exception as e:
+        if isinstance(e, TimeoutException):
+            raise HTTPException(status_code=503, detail="Timeout al verificar con GitHub. Revisa tu conexión.")
+        elif isinstance(e, RequestError):
+            raise HTTPException(status_code=503, detail=f"No se pudo conectar a GitHub: {str(e)[:100]}")
+        raise e
 
 @app.get("/", response_class=HTMLResponse)
 def serve_wizard():

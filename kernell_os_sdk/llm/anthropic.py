@@ -7,10 +7,10 @@ Used for "HARD" and "CRITICAL" reasoning tasks in the hybrid cluster.
 import os
 import json
 import logging
-import httpx
 from typing import List, AsyncGenerator
 
 from .base import BaseLLMProvider, LLMResponse, LLMMessage
+from ..security.ssrf import create_safe_client, create_safe_async_client, HTTPStatusError
 
 logger = logging.getLogger("kernell.llm.anthropic")
 
@@ -80,7 +80,7 @@ class AnthropicProvider(BaseLLMProvider):
         payload = self._format_payload(messages, **kwargs)
         
         try:
-            with httpx.Client(timeout=self.timeout) as client:
+            with create_safe_client(agent_id=self.model, timeout=self.timeout) as client:
                 response = client.post(
                     self.base_url,
                     headers=self._get_headers(),
@@ -118,7 +118,7 @@ class AnthropicProvider(BaseLLMProvider):
         payload = self._format_payload(messages, **kwargs)
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with create_safe_async_client(agent_id=self.model, timeout=self.timeout) as client:
                 response = await client.post(
                     self.base_url,
                     headers=self._get_headers(),
@@ -157,7 +157,7 @@ class AnthropicProvider(BaseLLMProvider):
         payload["stream"] = True
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with create_safe_async_client(agent_id=self.model, timeout=self.timeout) as client:
                 async with client.stream("POST", self.base_url, headers=self._get_headers(), json=payload) as response:
                     response.raise_for_status()
                     async for line in response.aiter_lines():
