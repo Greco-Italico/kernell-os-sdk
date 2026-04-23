@@ -172,7 +172,9 @@ class Agent:
                 return f"Error: [RATE_LIMIT] {e}"
 
             # PolicyEngine validates command, args, network, filesystem, and semantics
-            result = self.policy.validate(command)
+            # Crucially, we pass the current taint status to block exfiltration
+            is_tainted = self.execution_context.holds_sensitive_data
+            result = self.policy.validate(command, is_tainted=is_tainted)
             if not result.allowed:
                 logger.warning(
                     "execute_bash_denied",
@@ -207,8 +209,10 @@ class Agent:
                 
                 # Context Tagging (Taint Tracking)
                 sensitivity = DataSensitivity.PUBLIC
-                if "cat " in command or "grep " in command:
+                # If command reads files or was already tainted, mark context as holding sensitive data
+                if "cat " in command or "grep " in command or "ls " in command or "tree " in command:
                     sensitivity = DataSensitivity.INTERNAL
+                    self.execution_context.holds_sensitive_data = True
                 
                 self.execution_context.record_action(ActionTag(
                     command=command,

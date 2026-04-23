@@ -74,17 +74,17 @@ class ExecPolicy(BaseModel):
     allowed_commands: Dict[str, dict] = Field(
         default_factory=lambda: {
             # Navigation & listing
-            "ls": {"args": ["-l", "-a", "-h", "-R", "-t"]},
+            "ls": {"args": ["-l", "-a", "-h", "-R", "-t"], "validate": "path_read"},
             "pwd": {"args": []},
-            "tree": {"args": ["-L", "-a"]},
-            "du": {"args": ["-h", "-s", "-c"]},
+            "tree": {"args": ["-L", "-a"], "validate": "path_read"},
+            "du": {"args": ["-h", "-s", "-c"], "validate": "path_read"},
             "df": {"args": ["-h"]},
             # File reading
             "cat": {"args": ["-n"], "validate": "path_read"},
             "head": {"args": ["-n", "-c"], "validate": "path_read"},
             "tail": {"args": ["-n", "-f"], "validate": "path_read"},
-            "grep": {"args": ["-i", "-v", "-E", "-r", "-n"]},
-            "wc": {"args": ["-l", "-w", "-c"]},
+            "grep": {"args": ["-i", "-v", "-E", "-r", "-n"], "validate": "path_read"},
+            "wc": {"args": ["-l", "-w", "-c"], "validate": "path_read"},
             # Safe writes
             "echo": {"args": ["-n", "-e"]},
             "touch": {"args": [], "validate": "path_write"},
@@ -190,7 +190,7 @@ class PolicyEngine:
     def __init__(self, capabilities: AgentCapabilities):
         self.cap = capabilities
 
-    def validate(self, command: str) -> PolicyResult:
+    def validate(self, command: str, is_tainted: bool = False) -> PolicyResult:
         """
         Validate a command against the agent's full capability manifest.
 
@@ -230,7 +230,7 @@ class PolicyEngine:
         # Phase 3: Semantic deep inspection
         validator = policy.get("validate")
         if validator:
-            result = self._validate_semantics(validator, base_cmd, args)
+            result = self._validate_semantics(validator, base_cmd, args, is_tainted)
             if not result.allowed:
                 return result
 
@@ -263,7 +263,7 @@ class PolicyEngine:
 
         return PolicyResult(allowed=True, reason="Arguments valid")
 
-    def _validate_semantics(self, validator: str, cmd: str, args: List[str]) -> PolicyResult:
+    def _validate_semantics(self, validator: str, cmd: str, args: List[str], is_tainted: bool) -> PolicyResult:
         """Phase 3: Deep semantic inspection based on validator type."""
         dispatch = {
             "python": self._validate_python,
@@ -276,11 +276,11 @@ class PolicyEngine:
             logger.error("policy_unknown_validator", validator=validator, command=cmd)
             return PolicyResult(allowed=False, reason=f"Unknown validator: {validator}")
 
-        return handler(cmd, args)
+        return handler(cmd, args, is_tainted)
 
     # ── Semantic Validators ──────────────────────────────────────────────────
 
-    def _validate_python(self, cmd: str, args: List[str]) -> PolicyResult:
+    def _validate_python(self, cmd: str, args: List[str], is_tainted: bool) -> PolicyResult:
         """
         Validates Python execution.
 
@@ -314,16 +314,21 @@ class PolicyEngine:
 
         return PolicyResult(allowed=True, reason="Python execution validated")
 
-    def _validate_network(self, cmd: str, args: List[str]) -> PolicyResult:
+    def _validate_network(self, cmd: str, args: List[str], is_tainted: bool) -> PolicyResult:
         """
         Validates network commands (curl, wget, ping).
 
         Checks:
+        - Taint Status (Blocks Exfiltration if holding internal data)
         - Network must be enabled in capabilities
         - URL host must be in allowed_hosts
         - Only HTTPS unless allow_http is True
         - No command substitution / exfiltration patterns
         """
+        if is_tainted:
+            logger.warning("policy_denied_tainted_egress", command=cmd, category="exfiltration")
+            return PolicyResult(allowed=False, reason="Network egress denied: Agent holds sensitive data (Tainted)")
+
         if not self.cap.network.enabled:
             logger.warning("policy_denied_network_disabled", command=cmd, category="network")
             return PolicyResult(allowed=False, reason="Network access is disabled for this agent")
@@ -364,6 +369,23 @@ class PolicyEngine:
                     reason=f"Host '{parsed.hostname}' is not in the allowed network set"
                 )
 
+            # DNS Rebinding & SSRF Protection
+            import socket
+            import ipaddress
+            try:
+                ip_str = socket.gethostbyname(parsed.hostname)
+                ip = ipaddress.ip_address(ip_str)
+                if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+                    return PolicyResult(
+                        allowed=False,
+                        reason=f"DNS resolved to private/forbidden IP: {ip_str} (SSRF Blocked)"
+                    )
+            except Exception as e:
+                return PolicyResult(
+                    allowed=False,
+                    reason=f"DNS resolution failed for {parsed.hostname}"
+                )
+
             # Port check
             port = parsed.port or (443 if parsed.scheme == "https" else 80)
             if port not in self.cap.network.allowed_ports:
@@ -374,12 +396,13 @@ class PolicyEngine:
 
         return PolicyResult(allowed=True, reason="Network access validated")
 
-    def _validate_path_read(self, cmd: str, args: List[str]) -> PolicyResult:
+    def _validate_path_read(self, cmd: str, args: List[str], is_tainted: bool) -> PolicyResult:
         """Validates file read access against filesystem policy."""
         paths = [a for a in args if not a.startswith("-")]
+        # Taint the execution if ANY file is read (pessimistic taint propagation)
         return self._check_paths(paths, self.cap.filesystem.read, "read")
 
-    def _validate_path_write(self, cmd: str, args: List[str]) -> PolicyResult:
+    def _validate_path_write(self, cmd: str, args: List[str], is_tainted: bool) -> PolicyResult:
         """Validates file write access against filesystem policy."""
         paths = [a for a in args if not a.startswith("-")]
         return self._check_paths(paths, self.cap.filesystem.write, "write")

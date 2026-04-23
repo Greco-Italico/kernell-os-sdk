@@ -76,6 +76,7 @@ class CommandCenter:
             self._auth(request)
             budget_snap = self.agent.budget.snapshot() if hasattr(self.agent, 'budget') and self.agent.budget else None
             slo_score = self.agent.slo.score() if hasattr(self.agent, 'slo') and self.agent.slo else None
+            governor_snap = self.agent.governor.full_snapshot() if hasattr(self.agent, 'governor') and self.agent.governor else None
             return {
                 "agent": self.agent.name,
                 "id": self.agent.id,
@@ -83,6 +84,7 @@ class CommandCenter:
                 "permissions": self.agent.permissions.model_dump(),
                 "budget": budget_snap.__dict__ if budget_snap else None,
                 "slo": slo_score.__dict__ if slo_score else None,
+                "governor": governor_snap,
                 "passport": {
                     "kap": self.agent.passport.kap_address,
                     "volatile_wallet": self.agent.passport.kern_volatile_address,
@@ -228,7 +230,9 @@ input:checked+.sl:before{{transform:translateX(18px)}}
       <div class="field"><div class="lbl">Hardware UDID</div><div class="val">{self.agent.passport.hardware_udid[:16]}...</div></div>
     </div>
     <!-- Permissions -->
-    <div class="card"><h2><span>🛡️</span> Security Boundaries</h2><div id="permsBox"></div></div>
+    <div class="card"><h2><span>🛡️</span> Capabilities Boundaries</h2><div id="permsBox"></div></div>
+    <!-- Circuit Breakers -->
+    <div class="card"><h2><span>⚡</span> Circuit Breakers</h2><div id="defenseBox"></div></div>
     <!-- API Keys -->
     <div class="card"><h2><span>🔑</span> API Keys</h2>
       <div id="keysBox"></div>
@@ -313,10 +317,18 @@ async function refresh(){{
       el.style.color=d.slo.status==='HEALTHY'?'#4ade80':d.slo.status==='DEGRADED'?'#fbbf24':'#f87171';
     }}
     if(d.api_keys){{d.api_keys.forEach(k=>{{if(!apiKeys[k])apiKeys[k]='****'}});renderKeys();}}
-    if(d.skills){{
-      document.getElementById('skillsBox').innerHTML=d.skills.map(s=>`<span class="skill-tag">${{s}}</span>`).join('');
-    }}
-    const lr=await fetch('/api/audit',{{headers:headers()}});
+    if(d.skills){
+      document.getElementById('skillsBox').innerHTML=d.skills.map(s=>`<span class="skill-tag">${s}</span>`).join('');
+    }
+    if(d.governor){
+      let h='';
+      for(const [name, cb] of Object.entries(d.governor.breakers)){
+         let col = cb.state === 'CLOSED' ? '#4ade80' : cb.state === 'HALF_OPEN' ? '#fbbf24' : '#ef4444';
+         h += `<div class="field"><div class="lbl" style="text-transform:none">${name}</div><div class="val" style="color:${col};font-weight:600;font-size:0.75rem">${cb.state} <span style="font-size:0.85em;color:#64748b;font-weight:normal">(${cb.recent_failures}/${cb.failure_threshold} fails)</span></div></div>`;
+      }
+      document.getElementById('defenseBox').innerHTML = h;
+    }
+    const lr=await fetch('/api/audit',{headers:headers()});
     if(lr.ok){{const ld=await lr.json();
       document.getElementById('logBox').innerHTML=ld.log.reverse().slice(0,20).map(e=>
         `<div class="log-entry">${{new Date(e.ts*1000).toLocaleTimeString()}} ${{e.action}} — ${{e.detail}}</div>`
