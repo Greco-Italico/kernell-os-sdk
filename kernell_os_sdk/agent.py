@@ -1,5 +1,7 @@
 import inspect
 import json
+import re
+import subprocess
 import shlex
 import uuid
 import time
@@ -14,8 +16,9 @@ from .wallet import Wallet
 from .adapters import OpenInterpreterAdapter, AnthropicGUIAdapter, M2MAdapter, CapabilityRouter
 from .identity import (
     AgentPassport, create_passport, load_passport,
-    load_private_key, SecurityError
+    load_private_key, SecurityError, sign_message_bytes, verify_signature_bytes,
 )
+from .security.a2a_replay import A2AReplayGuard, A2AReplayError
 from .sandbox import Sandbox, ResourceLimits, AgentPermissions
 from .budget import TokenBudget
 from .health import SLOMonitor
@@ -28,14 +31,49 @@ from .security.rate_limiter import RateLimitGovernor, RateLimitExceeded
 
 logger = structlog.get_logger("kernell.agent")
 
+
+def _a2a_canonical_signing_bytes(
+    sender_agent_id: str,
+    tenant_id: str,
+    target_id: str,
+    payload: str,
+    sensitivity_value: str,
+    timestamp_ms: int,
+    nonce: str,
+) -> bytes:
+    """
+    Frozen A2A signing contract: UTF-8 JSON bytes, sort_keys, no floats (E2/E3).
+
+    - ``timestamp_ms``: wall clock in integer milliseconds
+    - ``nonce``: unique per message (replay protection with A2AReplayGuard)
+    """
+    body = {
+        "nonce": nonce,
+        "payload": payload,
+        "sender_agent_id": sender_agent_id,
+        "sensitivity": sensitivity_value,
+        "target_id": target_id,
+        "tenant_id": tenant_id,
+        "timestamp_ms": int(timestamp_ms),
+    }
+    return json.dumps(
+        body,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+
 class A2AMessage(BaseModel):
     """Cryptographically signed Inter-Agent message with Taint Propagation."""
-    sender_id: str
+    sender_id: str  # canonical agent_id (never display name)
+    tenant_id: str = "default"
     target_id: str
     payload: str
     sensitivity: DataSensitivity
     signature: bytes
-    timestamp: float
+    timestamp_ms: int
+    nonce: str
 
 
 class AgentState(BaseModel):
@@ -54,7 +92,7 @@ class Agent:
       - Shell injection prevention (no shell=True)
       - Command blacklisting
       - Permission name whitelisting
-      - UDID-bound passport with encrypted private key
+      - Passport with encrypted private key; UDID is best-effort host hint (C-05)
     """
     def __init__(
         self,
@@ -100,19 +138,18 @@ class Agent:
         self.memory = Memory(agent_id=self.id, config=self.config)
         self.wallet = Wallet(config=self.config)
         
-        # Capability Layer (Adapters)
+        # PC Container & Permissions (M-10 FIX: must init BEFORE adapters)
+        self.limits = limits or ResourceLimits()
+        self.permissions = permissions or AgentPermissions()
+        self.sandbox = Sandbox(self.id, self.limits, self.permissions)
+
+        # Capability Layer (Adapters) — sandbox is now guaranteed to exist
         self.adapters = {
-            "terminal": OpenInterpreterAdapter(self.sandbox) if hasattr(self, "sandbox") else None,
+            "terminal": OpenInterpreterAdapter(self.sandbox),
             "gui": AnthropicGUIAdapter(),
             "m2m": M2MAdapter(self)
         }
         self.router = CapabilityRouter(self.adapters, self.wallet)
-
-        # PC Container & Permissions
-        self.limits = limits or ResourceLimits()
-        self.permissions = permissions or AgentPermissions()
-        self.sandbox = Sandbox(self.id, self.limits, self.permissions)
-        self.adapters["terminal"] = OpenInterpreterAdapter(self.sandbox)
 
         self._skills: Dict[str, Callable] = {}
         self._skill_schemas: List[Dict[str, Any]] = []
@@ -134,12 +171,47 @@ class Agent:
         # Rate Limiting & Circuit Breakers (singleton)
         self.governor = RateLimitGovernor()
 
+        # A2A anti-replay (E3 on agent channel); swap for Redis in multi-instance deployments
+        self._a2a_replay_guard = A2AReplayGuard()
+
         # Register default Computer Use skills if enabled
         if self.permissions.gui_automation or self.permissions.execute_commands:
             self._register_computer_use_skills()
 
         logger.info("agent_initialized", agent_name=self.name, agent_id=self.id, kap_address=self.passport.kap_address)
         logger.info("wallet_status", volatile_address=self.passport.kern_volatile_address, solana_address=self.passport.kern_solana_address or "pending")
+
+    def _docker_exec_in_sandbox(self, argv: List[str], command_echo: str) -> str:
+        """Run ``argv`` inside the agent container (no shell). ``command_echo`` is for audit/taint only."""
+        container = self.sandbox.container_name
+        if not re.fullmatch(r"[a-zA-Z0-9_-]+", container):
+            return "Error: nombre de contenedor inválido (invariante de seguridad)."
+        args = ["docker", "exec", container, "--"] + list(argv)
+        res = subprocess.run(
+            args,
+            shell=False,
+            capture_output=True,
+            text=True,
+            timeout=self.capabilities.max_cpu_seconds,
+        )
+        stdout = res.stdout[: self.capabilities.max_output_bytes]
+
+        sensitivity = DataSensitivity.PUBLIC
+        if "cat " in command_echo or "grep " in command_echo or "ls " in command_echo or "tree " in command_echo:
+            sensitivity = DataSensitivity.INTERNAL
+            self.execution_context.holds_sensitive_data = True
+
+        self.execution_context.record_action(
+            ActionTag(
+                command=command_echo,
+                timestamp=time.time(),
+                bytes_processed=len(stdout),
+                sensitivity=sensitivity,
+            )
+        )
+        if res.returncode == 0:
+            return stdout
+        return f"Error (exit {res.returncode}): {res.stderr[:2000]}"
 
     def _is_command_safe(self, command: str) -> bool:
         """
@@ -193,37 +265,53 @@ class Agent:
             if not self.execution_gate.approve(command, risk):
                 return f"Error: [EXECUTION_GATE] CRITICAL action denied. Missing Multi-Sig or Oracle approval."
 
-            import subprocess
             try:
-                container = self.sandbox.container_name
-                args = ["docker", "exec", "--", container] + shlex.split(command)
-                res = subprocess.run(
-                    args,
-                    shell=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.capabilities.max_cpu_seconds,
-                )
-                # Enforce output size cap (anti-exfiltration)
-                stdout = res.stdout[:self.capabilities.max_output_bytes]
-                
-                # Context Tagging (Taint Tracking)
-                sensitivity = DataSensitivity.PUBLIC
-                # If command reads files or was already tainted, mark context as holding sensitive data
-                if "cat " in command or "grep " in command or "ls " in command or "tree " in command:
-                    sensitivity = DataSensitivity.INTERNAL
-                    self.execution_context.holds_sensitive_data = True
-                
-                self.execution_context.record_action(ActionTag(
-                    command=command,
-                    timestamp=time.time(),
-                    bytes_processed=len(stdout),
-                    sensitivity=sensitivity
-                ))
-                
-                if res.returncode == 0:
-                    return stdout
-                return f"Error (exit {res.returncode}): {res.stderr[:2000]}"
+                try:
+                    argv = shlex.split(command, posix=True)
+                except ValueError as e:
+                    return f"Error: comando mal formado: {e}"
+                if not argv:
+                    return "Error: comando vacío tras parseo."
+                return self._docker_exec_in_sandbox(argv, command)
+            except subprocess.TimeoutExpired:
+                return f"Error: Comando expiró después de {self.capabilities.max_cpu_seconds} segundos."
+            except Exception as e:
+                return f"Error inesperado: {str(e)[:500]}"
+
+        @self.skill(
+            "execute_bash_argv",
+            "Ejecuta en sandbox con argv tipado (lista de strings); preferido frente a execute_bash(str).",
+        )
+        def execute_bash_argv(argv: List[str]) -> str:
+            if not self.permissions.execute_commands:
+                return "Error: permiso 'execute_commands' está deshabilitado."
+            if not argv:
+                return "Error: argv vacío."
+            for part in argv:
+                if "\x00" in part:
+                    return "Error: byte NUL en argumento no permitido."
+
+            try:
+                self.governor.check_skill_call(self.id, "execute_bash_argv")
+            except RateLimitExceeded as e:
+                return f"Error: [RATE_LIMIT] {e}"
+
+            command = " ".join(shlex.quote(p) for p in argv)  # for logging/risk only
+            is_tainted = self.execution_context.holds_sensitive_data
+            # D-02 FIX: Use typed validate_argv() — no string→split round-trip.
+            result = self.policy.validate_argv(argv, is_tainted=is_tainted)
+            if not result.allowed:
+                logger.warning("execute_bash_argv_denied", command=command[:80], reason=result.reason)
+                return f"Error: [POLICY] {result.reason}"
+
+            risk = self.risk_engine.evaluate(command, self.execution_context)
+            if not self.risk_engine.cross_layer_verify(result.allowed, risk, command):
+                return f"Error: [CROSS_LAYER] Risk override blocked '{command[:40]}' despite policy approval."
+            if not self.execution_gate.approve(command, risk):
+                return f"Error: [EXECUTION_GATE] CRITICAL action denied. Missing Multi-Sig or Oracle approval."
+
+            try:
+                return self._docker_exec_in_sandbox(argv, command)
             except subprocess.TimeoutExpired:
                 return f"Error: Comando expiró después de {self.capabilities.max_cpu_seconds} segundos."
             except Exception as e:
@@ -245,31 +333,44 @@ class Agent:
             if self.execution_context.holds_sensitive_data:
                 msg_sensitivity = DataSensitivity.INTERNAL
 
-            import time
-            from nacl.signing import SigningKey
-            from nacl.encoding import Base64Encoder
-
-            # Sign payload + sensitivity
+            # C-03: Ed25519 via cryptography only (same stack as identity.sign_message_bytes).
             if not self._private_key:
                 return "Error: clave privada no disponible. No se puede firmar."
 
-            import binascii
-            raw_msg = f"{target_id}:{payload}:{msg_sensitivity.value}:{time.time()}".encode()
-            sk = SigningKey(binascii.unhexlify(self._private_key))
-            signature = sk.sign(raw_msg).signature
+            nonce = uuid.uuid4().hex
+            ts_ms = int(time.time() * 1000)
+            tenant_id = getattr(self.config, "tenant_id", None) or "default"
+            canonical = _a2a_canonical_signing_bytes(
+                self.id,
+                tenant_id,
+                target_id,
+                payload,
+                msg_sensitivity.value,
+                ts_ms,
+                nonce,
+            )
+            sig_hex = sign_message_bytes(canonical, self._private_key)
+            signature = bytes.fromhex(sig_hex)
 
-            # Build A2A Message
+            # Build A2A Message (sender_id = canonical agent_id, never self.name)
             msg = A2AMessage(
-                sender_id=self.name,
+                sender_id=self.id,
+                tenant_id=tenant_id,
                 target_id=target_id,
                 payload=payload,
                 sensitivity=msg_sensitivity,
                 signature=signature,
-                timestamp=time.time()
+                timestamp_ms=ts_ms,
+                nonce=nonce,
             )
             
             # Simulated network dispatch...
-            logger.info("a2a_message_dispatched", target=target_id, sensitivity=msg_sensitivity.name)
+            logger.info(
+                "a2a_message_dispatched",
+                target=target_id,
+                sensitivity=msg_sensitivity.name,
+                nonce_prefix=nonce[:8],
+            )
             return f"Message sent securely to {target_id}."
 
         # Sub-Agent Delegation
@@ -329,11 +430,51 @@ class Agent:
         return True
 
     def receive_a2a_message(self, message: A2AMessage) -> bool:
-        """Processes incoming A2A messages and forces Taint Propagation."""
-        # Signature validation would go here
+        """Processes incoming A2A messages with mandatory signature verification.
         
-        # OBLIGATORY TAINT PROPAGATION:
-        # If the incoming message is tainted, this agent becomes tainted.
+        Security invariant (C-02): Messages with invalid or missing signatures
+        are REJECTED. No taint propagation occurs without verified identity.
+        """
+        # C-02 / E3: skew, signature, then nonce (no taint before all pass).
+        try:
+            self._a2a_replay_guard.assert_timestamp_skew(message.timestamp_ms)
+        except A2AReplayError as e:
+            logger.error("a2a_rejected_time_skew", sender=message.sender_id, reason=str(e))
+            return False
+
+        canonical = _a2a_canonical_signing_bytes(
+            message.sender_id,
+            message.tenant_id,
+            message.target_id,
+            message.payload,
+            message.sensitivity.value,
+            message.timestamp_ms,
+            message.nonce,
+        )
+
+        # Lookup sender's public key from passport or registry (by canonical agent_id)
+        sender_pub_key = self._resolve_sender_public_key(message.sender_id)
+        if not sender_pub_key:
+            logger.error(
+                "a2a_rejected_unknown_sender",
+                sender=message.sender_id,
+            )
+            return False
+
+        if not verify_signature_bytes(canonical, message.signature.hex(), sender_pub_key):
+            logger.error(
+                "a2a_rejected_invalid_signature",
+                sender=message.sender_id,
+            )
+            return False
+
+        try:
+            self._a2a_replay_guard.consume_nonce(message.nonce)
+        except A2AReplayError as e:
+            logger.error("a2a_rejected_replay", sender=message.sender_id, reason=str(e))
+            return False
+        
+        # OBLIGATORY TAINT PROPAGATION (only after verified identity):
         if message.sensitivity > DataSensitivity.PUBLIC:
             logger.warning(
                 "agent_tainted_by_a2a",
@@ -343,6 +484,20 @@ class Agent:
             self.execution_context.holds_sensitive_data = True
             
         return True
+
+    def _resolve_sender_public_key(self, sender_id: str) -> Optional[str]:
+        """Resolve a sender's public key from the identity registry or local cache."""
+        # Try the IdentityRegistry (Redis-backed) first
+        if hasattr(self, 'memory') and self.memory.is_connected:
+            try:
+                from .identity import IdentityRegistry
+                registry = IdentityRegistry(self.memory._redis)
+                entry = registry.lookup(sender_id)
+                if entry:
+                    return entry.get("public_key_hex")
+            except Exception:
+                pass
+        return None
 
     def enable_delegation(self, max_workers: int, worker_engine: 'BaseLLMProvider', timeout: float = 60.0):
         """Enable local sub-agent delegation."""

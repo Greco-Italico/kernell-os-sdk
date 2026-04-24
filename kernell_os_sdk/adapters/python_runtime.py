@@ -1,3 +1,4 @@
+import os
 from typing import Dict, Any
 from .base import BaseAdapter
 from ..runtime import SubprocessRuntime, ExecutionRequest, ExecutionTimeout, SandboxViolation
@@ -13,7 +14,9 @@ class PythonRuntimeAdapter(BaseAdapter):
     capability_name = "python_execution"
 
     def __init__(self):
-        self.runtime = SubprocessRuntime()
+        # Same dual gate as SubprocessRuntime.execute (env + constructor flag).
+        allow = os.environ.get("KERNELL_ALLOW_UNSAFE_SUBPROCESS_RUNTIME") == "1"
+        self.runtime = SubprocessRuntime(allow_insecure_exec=allow)
 
     def execute(self, task: str, context: Dict[str, Any]) -> Dict[str, Any]:
         logger.info("python_runtime_executing", task_snippet=task[:50])

@@ -100,7 +100,7 @@ class AuditLedger:
         signature = ""
         if self.kms:
             try:
-                signature = self.kms.sign_payload(tenant_id, entry.serialize())
+                signature = self.kms.sign(tenant_id, entry.serialize().encode("utf-8")).hex()
             except Exception:
                 signature = "SIGNING_FAILED"
 
@@ -113,7 +113,7 @@ class AuditLedger:
             self.last_hash = entry_hash
             self.chain_length += 1
 
-    def verify_chain(self) -> Tuple[bool, int, str]:
+    def verify_chain(self, verify_signatures: bool = False) -> Tuple[bool, int, str]:
         """
         Verify the entire chain integrity.
         Returns (valid, entries_checked, error_message).
@@ -136,6 +136,7 @@ class AuditLedger:
 
                 entry_json = parts[0]
                 stored_hash = parts[1]
+                signature_hex = parts[2] if len(parts) >= 3 else ""
 
                 # Verify prev_hash chain
                 try:
@@ -150,6 +151,18 @@ class AuditLedger:
                 computed = hashlib.sha256(entry_json.encode()).hexdigest()
                 if computed != stored_hash:
                     return False, i, f"Hash mismatch at line {i}: computed={computed}, stored={stored_hash}"
+
+                # Optional KMS signature validation
+                if verify_signatures and self.kms:
+                    tenant_id = entry_data.get("tenant")
+                    if not signature_hex:
+                        return False, i, f"Missing signature at line {i}"
+                    try:
+                        sig = bytes.fromhex(signature_hex)
+                    except ValueError:
+                        return False, i, f"Malformed signature at line {i}"
+                    if not self.kms.verify(tenant_id, entry_json.encode("utf-8"), sig):
+                        return False, i, f"Invalid signature at line {i}"
 
                 prev_hash = stored_hash
                 checked += 1

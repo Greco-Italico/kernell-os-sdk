@@ -22,6 +22,8 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import shutil
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
@@ -211,8 +213,23 @@ class PolicyEngine:
         if not parts:
             return PolicyResult(allowed=False, reason="No command parts after parsing")
 
-        # Extract base command (strip paths)
-        base_cmd = parts[0].split("/")[-1].split("\\")[-1]
+        # C-12: resolve real executable before whitelist (mitigate symlink / PATH shadowing).
+        first = parts[0]
+        if os.path.isabs(first):
+            try:
+                resolved_executable = os.path.realpath(first)
+            except OSError:
+                resolved_executable = first
+        else:
+            which_path = shutil.which(first)
+            if not which_path:
+                logger.warning("policy_denied_command", command=first, category="not_in_path")
+                return PolicyResult(
+                    allowed=False,
+                    reason=f"Command '{first}' not found in PATH (use absolute path only if policy allows)",
+                )
+            resolved_executable = os.path.realpath(which_path)
+        base_cmd = Path(resolved_executable).name
         args = parts[1:]
 
         # Phase 1: Command whitelist
@@ -236,6 +253,65 @@ class PolicyEngine:
 
         logger.debug("policy_allowed", command=base_cmd, args_count=len(args))
         return PolicyResult(allowed=True, reason="All checks passed")
+
+    def validate_argv(self, argv: List[str], is_tainted: bool = False) -> PolicyResult:
+        """
+        Type-safe command validation operating on a pre-parsed argv list.
+
+        D-02 FIX: This is the preferred entry-point for execute_bash_argv(),
+        eliminating the lossy round-trip:
+            argv → shlex.quote → string → shlex.split → validate
+
+        The string-based validate() remains for backward compatibility with
+        execute_bash(command: str), but all typed callers should use this.
+        """
+        if not argv:
+            return PolicyResult(allowed=False, reason="Empty argv")
+
+        if sum(len(a) for a in argv) > 2048:
+            return PolicyResult(allowed=False, reason="Combined argv length exceeds max (2048)")
+
+        # C-12: resolve real executable before whitelist
+        first = argv[0]
+        if os.path.isabs(first):
+            try:
+                resolved_executable = os.path.realpath(first)
+            except OSError:
+                resolved_executable = first
+        else:
+            which_path = shutil.which(first)
+            if not which_path:
+                logger.warning("policy_denied_command", command=first, category="not_in_path")
+                return PolicyResult(
+                    allowed=False,
+                    reason=f"Command '{first}' not found in PATH",
+                )
+            resolved_executable = os.path.realpath(which_path)
+        base_cmd = Path(resolved_executable).name
+        args = argv[1:]
+
+        # Phase 1: Command whitelist
+        if base_cmd not in self.cap.exec.allowed_commands:
+            logger.warning("policy_denied_command", command=base_cmd, category="whitelist")
+            return PolicyResult(allowed=False, reason=f"Command '{base_cmd}' not in capability set")
+
+        policy = self.cap.exec.allowed_commands[base_cmd]
+
+        # Phase 2: Argument validation (operates on real list, no split ambiguity)
+        result = self._validate_args(base_cmd, args, policy)
+        if not result.allowed:
+            return result
+
+        # Phase 3: Semantic deep inspection
+        validator = policy.get("validate")
+        if validator:
+            result = self._validate_semantics(validator, base_cmd, args, is_tainted)
+            if not result.allowed:
+                return result
+
+        logger.debug("policy_allowed_argv", command=base_cmd, args_count=len(args))
+        return PolicyResult(allowed=True, reason="All checks passed (typed)")
+
 
     def _validate_args(self, cmd: str, args: List[str], policy: dict) -> PolicyResult:
         """Phase 2: Validate arguments against the command's allowed args list."""

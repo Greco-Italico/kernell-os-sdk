@@ -1,8 +1,9 @@
 import os
 import uvicorn
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 from typing import Dict, Optional
+import secrets as secrets_module
 
 # Load Prometheus metrics early so they register before the server starts
 from . import metrics as prom
@@ -23,6 +24,17 @@ class ExecutePayload(BaseModel):
     memory_limit_mb: int = 128
     tenant_id: str = "default_tenant"
     request_id: Optional[str] = None
+
+def _require_control_token(request) -> None:
+    token = os.getenv("FC_CONTROL_TOKEN", "").strip()
+    if not token:
+        raise HTTPException(status_code=503, detail="ControlPlaneUnavailable: FC_CONTROL_TOKEN not configured")
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    presented = auth[7:].strip()
+    if not secrets_module.compare_digest(presented, token):
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 @app.on_event("startup")
@@ -62,7 +74,8 @@ async def healthz():
 
 
 @app.post("/execute")
-async def execute(payload: ExecutePayload):
+async def execute(payload: ExecutePayload, request: Request):
+    _require_control_token(request)
     req = ExecutionRequest(
         code=payload.code,
         timeout=payload.timeout,
@@ -72,7 +85,7 @@ async def execute(payload: ExecutePayload):
     )
     
     # Use the orchestrator (Fair Queuing + Async Worker Pool) instead of direct execution
-    future = orchestrator.submit(req)
+    future = orchestrator.submit(req, request_id=payload.request_id)
     result = future.result()  # Blocks until execution completes or fails
     
     if result.exit_code == 402:
@@ -91,7 +104,11 @@ async def execute(payload: ExecutePayload):
 
 
 def main():
-    uvicorn.run("kernell_os_sdk.runtime.firecracker.server:app", host="0.0.0.0", port=8080, log_level="warning")
+    host = os.getenv("FC_CONTROL_PLANE_HOST", "127.0.0.1")
+    port = int(os.getenv("FC_CONTROL_PLANE_PORT", "8080"))
+    if host == "0.0.0.0" and not os.getenv("FC_ALLOW_PUBLIC_BIND", "").strip():
+        raise RuntimeError("Refusing to bind 0.0.0.0 without FC_ALLOW_PUBLIC_BIND=1")
+    uvicorn.run("kernell_os_sdk.runtime.firecracker.server:app", host=host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":

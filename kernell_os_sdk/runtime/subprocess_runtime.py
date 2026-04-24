@@ -1,6 +1,7 @@
 import subprocess
 import os
 import signal
+import logging
 from typing import Dict, Any
 
 try:
@@ -9,15 +10,36 @@ try:
 except ImportError:
     HAS_RESOURCE = False
 
+from ..identity import SecurityError
 from .base import BaseRuntime
 from .models import ExecutionRequest, ExecutionResult
 from .sandbox import SandboxFS, validate_code
 from .errors import ExecutionTimeout
 
+logger = logging.getLogger("kernell.subprocess_runtime")
+
+
+def _is_production_env() -> bool:
+    return os.getenv("KERNELL_ENV", "").strip().lower() == "production"
+
+
 class SubprocessRuntime(BaseRuntime):
     """
     Runtime Fase 1A: Ejecución aislada nativa usando subprocess + flags de Python.
     """
+    def __init__(self, allow_insecure_exec: bool = False, *args, **kwargs):
+        if _is_production_env():
+            raise SecurityError(
+                "SubprocessRuntime is forbidden when KERNELL_ENV=production "
+                "(unsafe native exec; use DockerRuntime / FirecrackerRuntime)."
+            )
+        if not allow_insecure_exec:
+            raise RuntimeError("CRITICAL SECURITY: SubprocessRuntime with exec() is disabled for production. Use DockerRuntime or pass allow_insecure_exec=True for testing/opt-in.")
+        logger.warning(
+            "unsafe_subprocess_runtime_initialized",
+            extra={"allow_insecure_exec": True, "KERNELL_ENV": os.getenv("KERNELL_ENV", "unset")},
+        )
+        super().__init__(*args, **kwargs)
 
     def _limit_resources(self, request: ExecutionRequest):
         """Aplica límites de sistema (solo en Linux/Unix)."""
@@ -54,6 +76,15 @@ class SubprocessRuntime(BaseRuntime):
                 pass
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
+        if _is_production_env():
+            raise SecurityError("SubprocessRuntime.execute blocked: KERNELL_ENV=production.")
+        # H-07: defense in depth — constructor opt-in is not enough for prod footguns.
+        if os.environ.get("KERNELL_ALLOW_UNSAFE_SUBPROCESS_RUNTIME") != "1":
+            raise RuntimeError(
+                "SubprocessRuntime.execute blocked: set KERNELL_ALLOW_UNSAFE_SUBPROCESS_RUNTIME=1 "
+                "for explicit non-production consent (in addition to allow_insecure_exec=True)."
+            )
+        logger.warning("unsafe_subprocess_runtime_execute", extra={"pid": os.getpid()})
         validate_code(request.code)
 
         with SandboxFS() as sandbox_dir:

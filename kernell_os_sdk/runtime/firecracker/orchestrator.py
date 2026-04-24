@@ -1,7 +1,8 @@
 import time
 import threading
 from concurrent.futures import Future
-from typing import Dict, Tuple
+from typing import Dict, Optional
+import uuid
 
 from ..models import ExecutionRequest, ExecutionResult
 from .scheduler import Scheduler
@@ -22,7 +23,8 @@ class RuntimeOrchestrator:
             t.start()
             self.workers.append(t)
 
-    def submit(self, request: ExecutionRequest, request_id: str) -> Future:
+    def submit(self, request: ExecutionRequest, request_id: Optional[str] = None) -> Future:
+        request_id = request_id or getattr(request, "request_id", None) or uuid.uuid4().hex
         future = Future()
         with self.lock:
             self.futures[request_id] = future

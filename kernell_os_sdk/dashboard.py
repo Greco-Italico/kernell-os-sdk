@@ -23,6 +23,15 @@ try:
     HAS_DEPS = True
 except ImportError:
     HAS_DEPS = False
+    Request = Any
+    HTTPException = Exception
+    def FastAPI(**kwargs):
+        class DummyApp:
+            def add_middleware(self, *a, **kw): pass
+            def get(self, *a, **kw): return lambda f: f
+            def post(self, *a, **kw): return lambda f: f
+            def delete(self, *a, **kw): return lambda f: f
+        return DummyApp()
 
 # Import from single source of truth
 from .constants import VALID_PERMISSIONS, RateLimiter  # noqa: F401
@@ -317,18 +326,18 @@ async function refresh(){{
       el.style.color=d.slo.status==='HEALTHY'?'#4ade80':d.slo.status==='DEGRADED'?'#fbbf24':'#f87171';
     }}
     if(d.api_keys){{d.api_keys.forEach(k=>{{if(!apiKeys[k])apiKeys[k]='****'}});renderKeys();}}
-    if(d.skills){
-      document.getElementById('skillsBox').innerHTML=d.skills.map(s=>`<span class="skill-tag">${s}</span>`).join('');
-    }
-    if(d.governor){
+    if(d.skills){{
+      document.getElementById('skillsBox').innerHTML=d.skills.map(s=>`<span class="skill-tag">${{s}}</span>`).join('');
+    }}
+    if(d.governor){{
       let h='';
-      for(const [name, cb] of Object.entries(d.governor.breakers)){
+      for(const [name, cb] of Object.entries(d.governor.breakers)){{
          let col = cb.state === 'CLOSED' ? '#4ade80' : cb.state === 'HALF_OPEN' ? '#fbbf24' : '#ef4444';
-         h += `<div class="field"><div class="lbl" style="text-transform:none">${name}</div><div class="val" style="color:${col};font-weight:600;font-size:0.75rem">${cb.state} <span style="font-size:0.85em;color:#64748b;font-weight:normal">(${cb.recent_failures}/${cb.failure_threshold} fails)</span></div></div>`;
-      }
+         h += `<div class="field"><div class="lbl" style="text-transform:none">${{name}}</div><div class="val" style="color:${{col}};font-weight:600;font-size:0.75rem">${{cb.state}} <span style="font-size:0.85em;color:#64748b;font-weight:normal">(${{cb.recent_failures}}/${{cb.failure_threshold}} fails)</span></div></div>`;
+      }}
       document.getElementById('defenseBox').innerHTML = h;
-    }
-    const lr=await fetch('/api/audit',{headers:headers()});
+    }}
+    const lr=await fetch('/api/audit',{{headers:headers()}});
     if(lr.ok){{const ld=await lr.json();
       document.getElementById('logBox').innerHTML=ld.log.reverse().slice(0,20).map(e=>
         `<div class="log-entry">${{new Date(e.ts*1000).toLocaleTimeString()}} ${{e.action}} — ${{e.detail}}</div>`

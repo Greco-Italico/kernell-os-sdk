@@ -1,6 +1,7 @@
 import socket
 import time
 import os
+import hashlib
 from .base import BaseRuntime
 from .models import ExecutionRequest, ExecutionResult
 from .firecracker.manager import FirecrackerManager
@@ -11,6 +12,16 @@ from .firecracker.telemetry import TelemetryManager
 from .firecracker.resilience import CircuitBreaker, CircuitOpenError, retry_with_jitter
 from .firecracker import metrics as prom
 from ..security.kms import LocalKMS
+from .sandbox_validator import validate_code
+from .firecracker.auth_protocol import (
+    load_shared_secret,
+    derive_key,
+    AuthenticatedFrame,
+    recv_len_prefixed,
+    AuthenticationError,
+    ProtocolConfigError,
+    sha256_hex,
+)
 
 VSOCK_PORT = 5000
 VSOCK_CID = 3
@@ -30,6 +41,13 @@ class FirecrackerRuntime(BaseRuntime):
         self.billing_manager = BillingManager()
         kms = LocalKMS()
         self.telemetry = TelemetryManager(kms=kms)
+        self._shared_secret = None
+        try:
+            self._shared_secret = load_shared_secret()
+        except ProtocolConfigError:
+            # Fail-close happens at execution time to allow dev imports,
+            # but production must configure the secret.
+            self._shared_secret = None
         
         self.pool_breaker = CircuitBreaker(failure_threshold=5, recovery_timeout=15.0, name="snapshot_pool")
         self.vsock_breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=10.0, name="vsock")
@@ -44,6 +62,17 @@ class FirecrackerRuntime(BaseRuntime):
         
         self.telemetry.trace(request_id, "START_EXECUTION", {"tenant_id": tenant_id})
         prom.INFLIGHT_REQUESTS.inc()
+
+        # 0. Host-side AST validation BEFORE any delegation (fail-close)
+        validation = validate_code(request.code, filename=f"<tenant:{tenant_id}>")
+        if not validation.valid:
+            prom.REJECTED_TOTAL.labels(reason="sandbox_violation").inc()
+            prom.INFLIGHT_REQUESTS.dec()
+            return ExecutionResult(
+                stdout="",
+                stderr=f"SandboxViolation: {validation}",
+                exit_code=400,
+            )
         
         # 0A. Billing Control (Pre-Auth Reserve)
         if not self.billing_manager.reserve(account, amount=1.0):
@@ -92,7 +121,13 @@ class FirecrackerRuntime(BaseRuntime):
             try:
                 # 2. Send code via vsock through circuit breaker + retry
                 def _do_vsock():
-                    return self._send_code_vsock(vm.vm_id, request.code, timeout=request.timeout)
+                    return self._send_code_vsock(
+                        vm.vm_id,
+                        request.code,
+                        timeout=request.timeout,
+                        tenant_id=tenant_id,
+                        request_id=request_id,
+                    )
                 
                 try:
                     result_text = self.vsock_breaker.call(
@@ -154,13 +189,23 @@ class FirecrackerRuntime(BaseRuntime):
                 request_id=request_id,
                 tenant_id=tenant_id,
                 action="EXECUTE_PAYLOAD",
-                details={"duration_sec": duration, "memory_mb": request.memory_limit_mb}
+                details={
+                    "duration_sec": duration,
+                    "memory_mb": request.memory_limit_mb,
+                    "code_hash": hashlib.sha256(request.code.encode("utf-8")).hexdigest(),
+                }
             )
 
-    def _send_code_vsock(self, vm_id: str, code: str, timeout: int) -> str:
+    def _send_code_vsock(self, vm_id: str, code: str, timeout: int, tenant_id: str, request_id: str) -> str:
         """
-        Connect to the VM's vsock server, send code, receive result.
+        Connect to the VM's vsock server, send authenticated framed payload, receive authenticated response.
         """
+        if not self._shared_secret:
+            raise ProtocolConfigError("Missing FC_VSOCK_SHARED_SECRET_B64 (fail-close)")
+
+        k_exec = derive_key(self._shared_secret, "kernell.vsock.exec.v1")
+        k_resp = derive_key(self._shared_secret, "kernell.vsock.resp.v1")
+
         s = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
         s.settimeout(timeout)
 
@@ -184,16 +229,25 @@ class FirecrackerRuntime(BaseRuntime):
             raise TimeoutError("Could not connect to VM vsock server within timeout")
 
         try:
-            s.sendall(code.encode())
+            payload_bytes = code.encode("utf-8")
+            meta = {
+                "timeout": int(timeout),
+                "payload_sha256": sha256_hex(payload_bytes),
+            }
+            frame = AuthenticatedFrame.create(
+                payload_bytes,
+                k_exec,
+                tenant_id=tenant_id,
+                request_id=request_id,
+                meta=meta,
+            )
+            s.sendall(frame.to_wire())
             s.shutdown(socket.SHUT_WR)
 
-            chunks = []
-            while True:
-                chunk = s.recv(MAX_RECV)
-                if not chunk:
-                    break
-                chunks.append(chunk)
-
-            return b"".join(chunks).decode()
+            resp_body = recv_len_prefixed(s)
+            resp_frame = AuthenticatedFrame.from_wire(resp_body, k_resp)
+            if resp_frame.tenant_id != tenant_id or resp_frame.request_id != request_id:
+                raise AuthenticationError("response tenant_id/request_id mismatch")
+            return resp_frame.payload_bytes().decode("utf-8", errors="replace")
         finally:
             s.close()

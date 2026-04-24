@@ -12,7 +12,8 @@ Usage:
     wallet.release_escrow(escrow_id)
 """
 import re
-from typing import Optional
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
+from typing import Optional, Union
 
 import structlog
 from kernell_os_sdk.security.ssrf import create_safe_client, RequestError, HTTPStatusError
@@ -45,6 +46,20 @@ class EscrowRequest(BaseModel):
         return v
 
 
+def _to_decimal(value: Union[float, int, str, Decimal]) -> Decimal:
+    """Coerce numeric input to Decimal. Rejects NaN/Inf."""
+    if isinstance(value, Decimal):
+        d = value
+    elif isinstance(value, float):
+        # Use str() to avoid float-precision artefacts: Decimal(0.1) ≠ Decimal('0.1')
+        d = Decimal(str(value))
+    else:
+        d = Decimal(value)
+    if not d.is_finite():
+        raise ValueError(f"Non-finite value rejected: {value!r}")
+    return d
+
+
 class Wallet:
     """
     Handles M2M commerce via the Kernell Agent Protocol (KAP).
@@ -63,18 +78,36 @@ class Wallet:
             timeout=REQUEST_TIMEOUT,
         )
         self._balance_lock = threading.Lock()
-        self._local_balance: float = 0.0
+        self._local_balance: Decimal = Decimal("0")
 
-    def credit(self, amount: float) -> float:
+    @property
+    def balance(self) -> Decimal:
+        """Current volatile balance (Decimal, thread-safe read)."""
         with self._balance_lock:
-            self._local_balance += amount
             return self._local_balance
 
-    def debit(self, amount: float) -> bool:
+    def credit(self, amount: Union[float, int, str, Decimal]) -> Decimal:
+        """Add funds. Returns new balance as Decimal.
+
+        Accepts float for backward compatibility but stores as Decimal internally
+        to prevent rounding errors in financial arithmetic (C-11 fix).
+        """
+        d = _to_decimal(amount)
+        if d <= 0:
+            raise ValueError("credit amount must be > 0")
         with self._balance_lock:
-            if self._local_balance < amount:
+            self._local_balance += d
+            return self._local_balance
+
+    def debit(self, amount: Union[float, int, str, Decimal]) -> bool:
+        """Deduct funds. Returns True if sufficient balance, False otherwise."""
+        d = _to_decimal(amount)
+        if d <= 0:
+            raise ValueError("debit amount must be > 0")
+        with self._balance_lock:
+            if self._local_balance < d:
                 return False
-            self._local_balance -= amount
+            self._local_balance -= d
             return True
 
     @retry(

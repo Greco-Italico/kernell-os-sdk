@@ -42,6 +42,9 @@ class KernellConfig(BaseModel):
     redis_url: Optional[str] = Field(default_factory=lambda: os.getenv("KERNELL_REDIS_URL", None))
     environment: str = Field(default_factory=lambda: os.getenv("KERNELL_ENV", "development"))
 
+    # Multi-tenant binding for signed channels (A2A, audit); default is single-tenant alpha.
+    tenant_id: str = Field(default_factory=lambda: os.getenv("KERNELL_TENANT_ID", "default"))
+
     # Wallet / Escrow configuration
     wallet_address: Optional[str] = Field(default_factory=lambda: os.getenv("KERNELL_WALLET_ADDRESS", None))
     # SECURITY: This field is EXCLUDED from serialization

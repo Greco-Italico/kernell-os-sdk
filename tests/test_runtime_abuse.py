@@ -1,13 +1,23 @@
+import os
 import pytest
 from kernell_os_sdk.runtime import SubprocessRuntime, DockerRuntime, ExecutionRequest, SandboxViolation
+
 
 @pytest.fixture(params=["subprocess", "docker"])
 def runtime(request):
     if request.param == "subprocess":
-        return SubprocessRuntime()
+        old = os.environ.get("KERNELL_ALLOW_UNSAFE_SUBPROCESS_RUNTIME")
+        os.environ["KERNELL_ALLOW_UNSAFE_SUBPROCESS_RUNTIME"] = "1"
+        try:
+            yield SubprocessRuntime(allow_insecure_exec=True)
+        finally:
+            if old is None:
+                os.environ.pop("KERNELL_ALLOW_UNSAFE_SUBPROCESS_RUNTIME", None)
+            else:
+                os.environ["KERNELL_ALLOW_UNSAFE_SUBPROCESS_RUNTIME"] = old
     else:
         # Nota: DockerRuntime asume Docker demon activo.
-        return DockerRuntime()
+        yield DockerRuntime()
 
 def test_bypass_import(runtime):
     # Intentar usar reflexión de builtins

@@ -42,7 +42,9 @@ class NativeMarketplaceAgent:
         
         # Economía y Marketplace
         self.marketplace = Marketplace()
-        self.escrow_manager = EscrowManager()
+        # Alpha-secure escrow requires actor key registry; this mock agent is non-cryptographic.
+        # Keep escrow available but explicitly ephemeral unless keys are registered.
+        self.escrow_manager = EscrowManager(db_path="/tmp/kernell_escrow.sqlite3")
         
         # Observabilidad y Métrica
         self.reputation_engine = ReputationEngine()

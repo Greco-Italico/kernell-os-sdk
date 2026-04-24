@@ -20,6 +20,7 @@ Usage:
 """
 import time
 import logging
+import threading
 from enum import Enum
 from typing import Optional, Callable, Any
 from dataclasses import dataclass, field
@@ -74,77 +75,88 @@ class CircuitBreaker:
         self._last_failure_time: float = 0.0
         self._last_failure_reason: str = ""
         self._opened_at: float = 0.0
+        self._lock = threading.Lock()
+
+    def _maybe_open_to_half_open_unlocked(self) -> None:
+        """Caller must hold ``_lock``. OPEN → HALF_OPEN after recovery timeout."""
+        if self._state == CircuitState.OPEN and time.time() - self._opened_at >= self.recovery_timeout:
+            self._state = CircuitState.HALF_OPEN
+            logger.info(f"[{self.name}] Circuit transitioned to HALF_OPEN (testing recovery)")
 
     @property
     def state(self) -> CircuitState:
         """Current state with automatic OPEN → HALF_OPEN transition."""
-        if self._state == CircuitState.OPEN:
-            if time.time() - self._opened_at >= self.recovery_timeout:
-                self._state = CircuitState.HALF_OPEN
-                logger.info(f"[{self.name}] Circuit transitioned to HALF_OPEN (testing recovery)")
-        return self._state
+        with self._lock:
+            self._maybe_open_to_half_open_unlocked()
+            return self._state
 
     def can_execute(self) -> bool:
         """Returns True if the action is allowed to execute."""
-        current = self.state
-        if current == CircuitState.CLOSED:
-            return True
-        if current == CircuitState.HALF_OPEN:
-            return True  # Allow one test call
-        return False  # OPEN
+        with self._lock:
+            self._maybe_open_to_half_open_unlocked()
+            if self._state == CircuitState.CLOSED:
+                return True
+            if self._state == CircuitState.HALF_OPEN:
+                return True  # Allow one test call
+            return False  # OPEN
 
     def record_success(self):
         """Record a successful execution."""
-        self._total_successes += 1
-        self._consecutive_failures = 0
-        self._consecutive_successes += 1
+        with self._lock:
+            self._total_successes += 1
+            self._consecutive_failures = 0
+            self._consecutive_successes += 1
 
-        if self._state == CircuitState.HALF_OPEN:
-            if self._consecutive_successes >= self.success_threshold:
-                self._state = CircuitState.CLOSED
-                self._consecutive_successes = 0
-                logger.info(f"[{self.name}] Circuit CLOSED — recovered after {self.success_threshold} successes")
+            if self._state == CircuitState.HALF_OPEN:
+                if self._consecutive_successes >= self.success_threshold:
+                    self._state = CircuitState.CLOSED
+                    self._consecutive_successes = 0
+                    logger.info(f"[{self.name}] Circuit CLOSED — recovered after {self.success_threshold} successes")
 
     def record_failure(self, reason: str = "unknown"):
         """Record a failed execution."""
-        self._total_failures += 1
-        self._consecutive_failures += 1
-        self._consecutive_successes = 0
-        self._last_failure_time = time.time()
-        self._last_failure_reason = reason
+        with self._lock:
+            self._total_failures += 1
+            self._consecutive_failures += 1
+            self._consecutive_successes = 0
+            self._last_failure_time = time.time()
+            self._last_failure_reason = reason
 
-        if self._state == CircuitState.HALF_OPEN:
-            # Immediate trip back to OPEN
-            self._state = CircuitState.OPEN
-            self._opened_at = time.time()
-            logger.warning(f"[{self.name}] Circuit re-OPENED from HALF_OPEN: {reason}")
+            if self._state == CircuitState.HALF_OPEN:
+                # Immediate trip back to OPEN
+                self._state = CircuitState.OPEN
+                self._opened_at = time.time()
+                logger.warning(f"[{self.name}] Circuit re-OPENED from HALF_OPEN: {reason}")
 
-        elif self._consecutive_failures >= self.failure_threshold:
-            self._state = CircuitState.OPEN
-            self._opened_at = time.time()
-            logger.warning(
-                f"[{self.name}] Circuit OPENED after {self._consecutive_failures} "
-                f"consecutive failures. Last: {reason}"
-            )
-            if self.on_open:
-                try:
-                    self.on_open(f"Circuit '{self.name}' opened: {reason}")
-                except Exception:
-                    pass
+            elif self._consecutive_failures >= self.failure_threshold:
+                self._state = CircuitState.OPEN
+                self._opened_at = time.time()
+                logger.warning(
+                    f"[{self.name}] Circuit OPENED after {self._consecutive_failures} "
+                    f"consecutive failures. Last: {reason}"
+                )
+                if self.on_open:
+                    try:
+                        self.on_open(f"Circuit '{self.name}' opened: {reason}")
+                    except Exception:
+                        pass
 
     def reset(self):
         """Manually reset the circuit breaker to CLOSED."""
-        self._state = CircuitState.CLOSED
-        self._consecutive_failures = 0
-        self._consecutive_successes = 0
-        logger.info(f"[{self.name}] Circuit manually reset to CLOSED")
+        with self._lock:
+            self._state = CircuitState.CLOSED
+            self._consecutive_failures = 0
+            self._consecutive_successes = 0
+            logger.info(f"[{self.name}] Circuit manually reset to CLOSED")
 
     def time_until_half_open(self) -> float:
         """Seconds until the circuit transitions from OPEN to HALF_OPEN."""
-        if self._state != CircuitState.OPEN:
-            return 0.0
-        elapsed = time.time() - self._opened_at
-        return max(0.0, self.recovery_timeout - elapsed)
+        with self._lock:
+            self._maybe_open_to_half_open_unlocked()
+            if self._state != CircuitState.OPEN:
+                return 0.0
+            elapsed = time.time() - self._opened_at
+            return max(0.0, self.recovery_timeout - elapsed)
 
     def stats(self) -> CircuitStats:
         """Get current circuit breaker statistics."""

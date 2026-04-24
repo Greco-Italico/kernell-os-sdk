@@ -85,8 +85,8 @@ class SSRFSafeTransport(httpx.HTTPTransport):
             logger.warning("ssrf_blocked_scheme", scheme=scheme, agent_id=self.agent_id)
             raise SSRFViolation(f"Blocked scheme: {scheme}. Only http/https are allowed.")
             
-        port = url.port
-        if port and not _is_port_allowed(port):
+        port = url.port or (443 if url.scheme == "https" else 80)
+        if not _is_port_allowed(port):
             logger.warning("ssrf_blocked_port", port=port, host=url.host, agent_id=self.agent_id)
             raise SSRFViolation(f"Blocked sensitive port: {port}")
             
@@ -137,8 +137,8 @@ class SSRFSafeAsyncTransport(httpx.AsyncHTTPTransport):
             logger.warning("ssrf_blocked_scheme", scheme=scheme, agent_id=self.agent_id)
             raise SSRFViolation(f"Blocked scheme: {scheme}. Only http/https are allowed.")
             
-        port = url.port
-        if port and not _is_port_allowed(port):
+        port = url.port or (443 if url.scheme == "https" else 80)
+        if not _is_port_allowed(port):
             logger.warning("ssrf_blocked_port", port=port, host=url.host, agent_id=self.agent_id)
             raise SSRFViolation(f"Blocked sensitive port: {port}")
 

@@ -82,7 +82,6 @@ _SECRET_VALUE_PATTERNS: tuple[re.Pattern, ...] = tuple(
 )
 
 _REDACTED = "***REDACTED***"
-_MAX_CODE_LOG_CHARS: int = 500   # truncar payloads de código en logs
 
 # ---------------------------------------------------------------------------
 # Procesador principal

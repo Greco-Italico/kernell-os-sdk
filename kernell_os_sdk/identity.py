@@ -9,12 +9,13 @@ The passport contains:
   - An Ed25519 keypair for message signing
   - A KAP-compatible identity hash
   - Dual wallet addresses (volatile KERN + Solana KERN)
-  - Hardware UDID binding (anti-cloning)
+  - Hardware UDID field (best-effort device hint; see AgentPassport)
 
 SECURITY:
   - Private keys are encrypted at rest using Fernet (AES-128-CBC)
   - Passports are signed with HMAC-SHA256 to prevent tampering
-  - UDID is validated on every load to prevent cloning
+  - ``hardware_udid`` is NOT a cryptographic security boundary against root,
+    VM escape, or physical cloning; it is best-effort binding only (C-05).
 """
 from __future__ import annotations
 
@@ -36,6 +37,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.fernet import Fernet
 
+import logging
+logger = logging.getLogger("kernell.identity")
+
 def write_secret_bytes(path: Path, data: bytes) -> None:
     import stat
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -48,16 +52,127 @@ def write_secret_bytes(path: Path, data: bytes) -> None:
         os.close(fd)
 
 def _get_machine_secret() -> str:
-    """Retrieve or generate a high-entropy secret bound to this machine."""
-    secret_path = Path.home() / ".kernell" / ".machine_secret"
-    if secret_path.exists():
-        return secret_path.read_text().strip()
-    
-    # Generate a cryptographically secure random secret
+    """Retrieve or generate a high-entropy secret bound to this machine.
+
+    C-04 FIX: Defence-in-depth for the machine secret:
+      1. Try OS keyring (Linux libsecret / macOS Keychain) — preferred.
+      2. Fall back to filesystem with STRICT invariants:
+         a. File permissions MUST be 0600 (owner read/write only).
+         b. File owner MUST be the current UID.
+         c. Parent directory permissions MUST be 0700.
+         d. Emit loud warnings if invariants are degraded.
+
+    The machine secret encrypts all agent private keys at rest.
+    If it is compromised, ALL identities derived from it are compromised.
+    """
     import secrets
-    secret = secrets.token_hex(32)
-    write_secret_bytes(secret_path, secret.encode())
-    return secret
+    import stat as stat_mod
+    import warnings
+
+    _KEYRING_SERVICE = "kernell-os"
+    _KEYRING_KEY = "machine_secret"
+
+    # ── Strategy 1: OS Keyring ──────────────────────────────────────────
+    try:
+        import keyring as _kr
+        stored = _kr.get_password(_KEYRING_SERVICE, _KEYRING_KEY)
+        if stored:
+            return stored
+        # Generate and store in keyring
+        new_secret = secrets.token_hex(32)
+        _kr.set_password(_KEYRING_SERVICE, _KEYRING_KEY, new_secret)
+        logger.info("machine_secret_stored_in_keyring: service=%s", _KEYRING_SERVICE)
+        return new_secret
+    except Exception:
+        # keyring not installed or backend unavailable (headless server, etc.)
+        pass
+
+    # ── Strategy 2: Hardened filesystem ─────────────────────────────────
+    secret_path = Path.home() / ".kernell" / ".machine_secret"
+    secret_dir = secret_path.parent
+
+    if secret_path.exists():
+        # INVARIANT CHECK: permissions and ownership
+        _verify_secret_file_permissions(secret_path)
+        return secret_path.read_text().strip()
+
+    # Generate new secret with strict permissions from the start
+    new_secret = secrets.token_hex(32)
+
+    # Create parent dir with 0700
+    secret_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(str(secret_dir), stat_mod.S_IRWXU)  # 0700
+    except OSError:
+        pass
+
+    write_secret_bytes(secret_path, new_secret.encode())
+
+    warnings.warn(
+        "Machine secret stored on filesystem at ~/.kernell/.machine_secret. "
+        "For production, install 'keyring' package to use OS-native secret storage "
+        "(libsecret on Linux, Keychain on macOS). "
+        "This file encrypts ALL agent private keys — protect it accordingly.",
+        stacklevel=2,
+    )
+    logger.warning("machine_secret_filesystem_fallback: path=%s recommendation='pip install keyring'", secret_path)
+    return new_secret
+
+
+def _verify_secret_file_permissions(path: Path) -> None:
+    """Verify filesystem invariants on the machine secret file.
+
+    C-04: These are not security boundaries (filesystem is not a trust domain
+    against root), but they catch accidental misconfiguration and raise the
+    bar for opportunistic access.
+    """
+    import stat as stat_mod
+    import warnings
+
+    try:
+        st = path.stat()
+    except OSError:
+        return
+
+    # Check file permissions (must be 0600)
+    mode = stat_mod.S_IMODE(st.st_mode)
+    if mode & (stat_mod.S_IRWXG | stat_mod.S_IRWXO):
+        warnings.warn(
+            f"SECURITY: {path} has permissions {oct(mode)} — "
+            f"expected 0600 (owner-only). Other users can read your machine secret. "
+            f"Run: chmod 600 {path}",
+            stacklevel=3,
+        )
+        logger.error("machine_secret_permissions_too_open: path=%s mode=%s", path, oct(mode))
+        # Attempt auto-fix
+        try:
+            os.chmod(str(path), stat_mod.S_IRUSR | stat_mod.S_IWUSR)
+            logger.info("machine_secret_permissions_auto_fixed: %s", path)
+        except OSError:
+            pass
+
+    # Check ownership (must be current UID)
+    if hasattr(os, "getuid") and st.st_uid != os.getuid():
+        warnings.warn(
+            f"SECURITY: {path} is owned by UID {st.st_uid}, but current process "
+            f"is UID {os.getuid()}. This is a potential privilege escalation vector.",
+            stacklevel=3,
+        )
+        logger.error("machine_secret_wrong_owner: path=%s file_uid=%s process_uid=%s", path, st.st_uid, os.getuid())
+
+    # Check parent directory permissions
+    parent = path.parent
+    try:
+        parent_st = parent.stat()
+        parent_mode = stat_mod.S_IMODE(parent_st.st_mode)
+        if parent_mode & (stat_mod.S_IRWXG | stat_mod.S_IRWXO):
+            logger.warning("machine_secret_parent_dir_too_open: path=%s mode=%s", parent, oct(parent_mode))
+            try:
+                os.chmod(str(parent), stat_mod.S_IRWXU)  # 0700
+            except OSError:
+                pass
+    except OSError:
+        pass
 
 def _get_or_create_salt(storage_dir: Path) -> bytes:
     """
@@ -112,8 +227,8 @@ class AgentPassport:
     kern_volatile_address: str   # Internal KERN token address
     kern_solana_address: Optional[str] = None  # Solana SPL token address (set after bridge)
 
-    # Security Binding
-    hardware_udid: str = ""      # Prevents passport cloning
+    # Best-effort device hint (NOT a security boundary vs root / clone — C-05).
+    hardware_udid: str = ""
 
     # Metadata
     origin: str = "sdk"
@@ -208,7 +323,7 @@ def create_passport(
 ) -> Tuple[AgentPassport, str]:
     """
     Create a new agent passport with full cryptographic identity.
-    Binds the passport to the host machine's hardware UDID.
+    Records a best-effort hardware UDID hint (C-05: not a TPM-grade root of trust).
     Private key is encrypted at rest.
     Passport is signed with HMAC to prevent tampering.
 
@@ -261,7 +376,7 @@ def create_passport(
         sig_path = storage_dir / ".passport_sig"
         write_secret_bytes(sig_path, hmac_sig.encode())
 
-        # Encrypt private key at rest (bound to this machine's UDID)
+        # Encrypt private key at rest (machine secret + salt; UDID is orthogonal hint)
         encrypted_key = _encrypt_private_key(private_hex, storage_dir)
         key_path = storage_dir / ".private_key.enc"
         write_secret_bytes(key_path, encrypted_key)
@@ -281,7 +396,7 @@ def load_passport(storage_dir: Path) -> Optional[AgentPassport]:
     Checks:
       1. Passport JSON schema validation
       2. HMAC signature integrity (detects tampering)
-      3. Hardware UDID match (detects cloning to another machine)
+      3. Hardware UDID match (best-effort host consistency; C-05 — not anti-clone vs root)
     """
     from .telemetry import HardwareFingerprint
 
@@ -300,30 +415,38 @@ def load_passport(storage_dir: Path) -> Optional[AgentPassport]:
     # Verify HMAC integrity
     sig_path = storage_dir / ".passport_sig"
     key_path = storage_dir / ".private_key.enc"
-    if sig_path.exists() and key_path.exists():
-        try:
-            private_hex = _decrypt_private_key(key_path.read_bytes(), storage_dir)
-            expected_hmac = _compute_passport_hmac(passport.to_json(), private_hex)
-            actual_hmac = sig_path.read_text().strip()
-            if not hmac_module.compare_digest(expected_hmac, actual_hmac):
-                raise SecurityError(
-                    "PASSPORT INTEGRITY FAILURE: HMAC mismatch. "
-                    "The passport file has been tampered with."
-                )
-        except Exception as e:
-            if isinstance(e, SecurityError):
-                raise
-            raise SecurityError(f"Cannot verify passport integrity: {e}")
 
-    # Verify hardware UDID (anti-cloning)
+    # H-02 FIX: Fail-close if integrity files are missing.
+    # An attacker could previously delete .passport_sig to bypass HMAC verification.
+    if not sig_path.exists() or not key_path.exists():
+        raise SecurityError(
+            "PASSPORT INTEGRITY FAILURE: Signature or encrypted key file missing. "
+            "Cannot verify passport authenticity. This may indicate tampering or corruption. "
+            f"sig_exists={sig_path.exists()}, key_exists={key_path.exists()}"
+        )
+
+    try:
+        private_hex = _decrypt_private_key(key_path.read_bytes(), storage_dir)
+        expected_hmac = _compute_passport_hmac(passport.to_json(), private_hex)
+        actual_hmac = sig_path.read_text().strip()
+        if not hmac_module.compare_digest(expected_hmac, actual_hmac):
+            raise SecurityError(
+                "PASSPORT INTEGRITY FAILURE: HMAC mismatch. "
+                "The passport file has been tampered with."
+            )
+    except SecurityError:
+        raise
+    except Exception as e:
+        raise SecurityError(f"Cannot verify passport integrity: {e}")
+
+    # Best-effort hardware UDID consistency (C-05 — not a cryptographic security boundary)
     if passport.hardware_udid:
         current_udid = HardwareFingerprint.get_system_udid()
         if passport.hardware_udid != current_udid:
             raise SecurityError(
-                f"HARDWARE BINDING VIOLATION: This passport was created on a different machine. "
-                f"Expected UDID: {passport.hardware_udid[:16]}... "
-                f"Current UDID: {current_udid[:16]}... "
-                f"Agent will NOT start."
+                "HARDWARE BINDING MISMATCH (best-effort C-05): Passport UDID does not match this host. "
+                f"Expected: {passport.hardware_udid[:16]}… Current: {current_udid[:16]}… "
+                "Agent will NOT start."
             )
 
     return passport
@@ -368,12 +491,29 @@ def sign_message(message: str, private_key_hex: str) -> str:
     return signature.hex()
 
 
+def sign_message_bytes(message: bytes, private_key_hex: str) -> str:
+    """Sign raw bytes (A2A canonical UTF-8 payload contract)."""
+    private_key = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(private_key_hex))
+    return private_key.sign(message).hex()
+
+
 def verify_signature(message: str, signature_hex: str, public_key_hex: str) -> bool:
     """Verify an Ed25519 signature. Returns True if valid."""
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
     try:
         public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
         public_key.verify(bytes.fromhex(signature_hex), message.encode())
+        return True
+    except Exception:
+        return False
+
+
+def verify_signature_bytes(message: bytes, signature_hex: str, public_key_hex: str) -> bool:
+    """Verify Ed25519 over exact message bytes (no implicit encoding)."""
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    try:
+        public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
+        public_key.verify(bytes.fromhex(signature_hex), message)
         return True
     except Exception:
         return False

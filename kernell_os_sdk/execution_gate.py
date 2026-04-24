@@ -41,13 +41,11 @@ class ExecutionGate:
             return True
             
         if risk == RiskLevel.HIGH:
-            logger.warning("execution_gate_high_risk", command=command)
-            blocked_cmds = ["curl", "wget", "git push", "nc", "ncat", "socat", "python3 -c", "python -c"]
-            if any(cmd in command for cmd in blocked_cmds):
-                logger.error("execution_gate_egress_blocked", command=command)
-                return False
-            # Future: Request Oracle pre-approval
-            return True
+            # C-10 FIX: Fail-close for HIGH risk. The old string-matching blocklist
+            # was trivially bypasseable (/usr/bin/curl, python -m urllib, etc.).
+            # HIGH risk actions require explicit multi-sig approval, same as CRITICAL.
+            logger.warning("execution_gate_high_risk_denied", command=command)
+            return self._enforce_multisig_and_timelock(command, signatures)
             
         if risk == RiskLevel.CRITICAL:
             logger.critical("execution_gate_critical_risk_triggered", command=command)

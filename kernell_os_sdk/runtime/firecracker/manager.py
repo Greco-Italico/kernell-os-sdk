@@ -13,7 +13,7 @@ class FirecrackerManager:
         self.kernel = kernel_path
         self.rootfs = rootfs_path
 
-    def start_vm(self, memory_mb=128, cpu_count=1):
+    def start_vm(self, memory_mb=128, cpu_count=1, rootfs_read_only: bool = True):
         vm_id = str(uuid.uuid4())
         socket_path = f"/tmp/firecracker-{vm_id}.sock"
 
@@ -51,7 +51,7 @@ class FirecrackerManager:
                 "drive_id": "rootfs",
                 "path_on_host": self.rootfs,
                 "is_root_device": True,
-                "is_read_only": False
+                "is_read_only": bool(rootfs_read_only)
             }).raise_for_status()
 
             # 4.5 Configure VSOCK

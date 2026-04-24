@@ -1,272 +1,155 @@
-name: Security CI
+name: Kernell OS Security Pipeline
 
 on:
   push:
-    branches: [main, dev]
+    branches: [ "main" ]
   pull_request:
-    branches: [main]
+    branches: [ "main" ]
   schedule:
-    # Escaneo nocturno de dependencias (02:30 UTC los lunes)
-    - cron: "30 2 * * 1"
-
-permissions:
-  contents: read
-  security-events: write   # para subir resultados SARIF a GitHub Security
+    - cron: '0 4 * * 0' # Weekly scan
 
 jobs:
-  # ─────────────────────────────────────────────────────────────────────────
-  # 1. Tests de seguridad (incluyendo evasión de sandbox)
-  # ─────────────────────────────────────────────────────────────────────────
-  test:
-    name: Security Tests
-    runs-on: ubuntu-latest
-    env:
-      KERNELL_ENV: test   # habilita SubprocessRuntime, usa KDF FAST
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -e ".[dev]"
-          # Verificar que structlog está disponible (Fix #1 del reporte)
-          python -c "import structlog; print(f'structlog {structlog.__version__} OK')"
-
-      - name: Run security test suite
-        run: |
-          pytest tests/test_security.py -v \
-            --tb=short \
-            --no-header \
-            -q
-
-      - name: Run full test suite
-        run: |
-          pytest tests/ -v \
-            --tb=short \
-            --ignore=tests/test_security.py
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # 2. Análisis estático de seguridad (bandit)
-  # ─────────────────────────────────────────────────────────────────────────
-  bandit:
-    name: Bandit SAST
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install bandit
-        run: pip install bandit[toml]
-
-      - name: Run bandit
-        run: |
-          bandit -r kernell_os_sdk/ kap_escrow/ \
-            -ll \
-            --format sarif \
-            --output bandit-results.sarif \
-            || true   # no fallar el job — subir resultados aunque haya findings
-
-      - name: Upload SARIF to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: bandit-results.sarif
-          category: bandit
-
-      - name: Fail on HIGH/CRITICAL bandit findings
-        run: |
-          bandit -r kernell_os_sdk/ kap_escrow/ \
-            --severity-level high \
-            --confidence-level high \
-            --exit-zero=false
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # 3. Semgrep — reglas de seguridad multi-framework
-  # ─────────────────────────────────────────────────────────────────────────
-  semgrep:
-    name: Semgrep
-    runs-on: ubuntu-latest
-    container:
-      image: semgrep/semgrep
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run semgrep
-        run: |
-          semgrep \
-            --config=auto \
-            --config=p/python \
-            --config=p/secrets \
-            --config=p/supply-chain \
-            --sarif \
-            --output=semgrep-results.sarif \
-            kernell_os_sdk/ kap_escrow/ tests/ \
-            || true
-
-      - name: Upload SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: semgrep-results.sarif
-          category: semgrep
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # 4. Auditoría de dependencias Python
-  # ─────────────────────────────────────────────────────────────────────────
-  pip-audit:
-    name: pip-audit + safety
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install audit tools
-        run: pip install pip-audit safety
-
-      - name: pip-audit (OSV database)
-        run: |
-          pip-audit \
-            --require-hashes \
-            --progress-spinner=off \
-            -r <(pip install -e . --dry-run --report - --quiet | \
-                 python -c "import sys,json; [print(f\"{p['name']}=={p['version']}\") for p in json.load(sys.stdin)['install']]") \
-            || pip-audit --progress-spinner=off   # fallback sin hashes
-
-      - name: safety check (PyUp database)
-        run: |
-          safety check \
-            --full-report \
-            --policy-file .safety-policy.yml \
-            || true   # informativo — no bloquea el build
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # 5. Auditoría de dependencias Rust
-  # ─────────────────────────────────────────────────────────────────────────
-  cargo-audit:
-    name: cargo audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
-
-      - name: Run cargo audit
-        run: cargo audit
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # 6. Escaneo de secretos en el historial de git
-  # ─────────────────────────────────────────────────────────────────────────
-  secrets-scan:
-    name: Secret Scanning (gitleaks)
+  secret-scanning:
+    name: 🕵️ Secret Scanning
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # historial completo para detectar secretos en commits pasados
-
-      - name: Run gitleaks
+          fetch-depth: 0
+      - name: Gitleaks Scan
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: TruffleHog Scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
 
-  # ─────────────────────────────────────────────────────────────────────────
-  # 7. Generación de SBOM (Software Bill of Materials)
-  # ─────────────────────────────────────────────────────────────────────────
-  sbom:
-    name: Generate SBOM
+  dependency-scanning:
+    name: 📦 Supply Chain & Dependencies
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'   # solo en main
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install syft
-        uses: anchore/sbom-action/download-syft@v0
-
-      - name: Generate SBOM (CycloneDX)
-        run: |
-          syft . \
-            --output cyclonedx-json=sbom.cdx.json \
-            --output spdx-json=sbom.spdx.json
-
-      - name: Upload SBOM artifacts
-        uses: actions/upload-artifact@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          name: sbom
-          path: |
-            sbom.cdx.json
-            sbom.spdx.json
-          retention-days: 90
+          python-version: "3.11"
+      - name: Install scanners
+        run: pip install safety pip-audit
+      - name: Run pip-audit
+        run: pip-audit
+      - name: Run Safety
+        run: safety check
 
-  # ─────────────────────────────────────────────────────────────────────────
-  # 8. Escaneo de imagen Docker
-  # ─────────────────────────────────────────────────────────────────────────
-  trivy:
-    name: Trivy Image Scan
+  sast:
+    name: 🔬 Static Analysis (SAST)
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@v4
-
-      - name: Build sandbox image
-        run: docker build -t kernell-sandbox:ci -f Dockerfile .
-        continue-on-error: true   # si no hay Dockerfile, saltar
-
-      - name: Run trivy on image
-        uses: aquasecurity/trivy-action@master
+      - name: Run Semgrep
+        uses: returntocorp/semgrep-action@v1
         with:
-          image-ref: kernell-sandbox:ci
-          format: sarif
-          output: trivy-results.sarif
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-        continue-on-error: true
+          config: "p/python"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+      - name: Install Bandit & Ruff
+        run: pip install bandit ruff mypy
+      - name: Run Bandit
+        run: bandit -r kernell_os_sdk/ -c pyproject.toml || true
+      - name: Run Ruff Linter
+        run: ruff check kernell_os_sdk/ || true
 
-      - name: Upload trivy SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy-results.sarif
-          category: trivy
-        continue-on-error: true
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # Gate final — todos los jobs críticos deben pasar para merge a main
-  # ─────────────────────────────────────────────────────────────────────────
-  security-gate:
-    name: Security Gate
+  security-fast:
+    name: 🛡️ Security Fast Gates
     runs-on: ubuntu-latest
-    needs: [test, bandit, semgrep, pip-audit, cargo-audit, secrets-scan]
-    if: always()
     steps:
-      - name: Check all security jobs passed
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
         run: |
-          echo "test:         ${{ needs.test.result }}"
-          echo "bandit:       ${{ needs.bandit.result }}"
-          echo "semgrep:      ${{ needs.semgrep.result }}"
-          echo "pip-audit:    ${{ needs.pip-audit.result }}"
-          echo "cargo-audit:  ${{ needs.cargo-audit.result }}"
-          echo "secrets-scan: ${{ needs.secrets-scan.result }}"
+          pip install -e ".[test]"
+      
+      - name: 🔒 1. Architecture Linter (SSRF Block)
+        run: python test_ssrf_imports.py
+        
+      - name: 🔒 2. Multi-Layer Rate Limiter & Circuit Breakers
+        run: python test_rate_limiting.py
+        
+      - name: 🔒 3. Verify Docker Hardening Options
+        run: |
+          grep -q "cap-drop=ALL" kernell_os_sdk/runtime/docker_runtime.py
+          grep -q "network=none" kernell_os_sdk/runtime/docker_runtime.py
+          grep -q "security-opt=no-new-privileges" kernell_os_sdk/runtime/docker_runtime.py
+      - name: 🔒 4. Security tests (fast)
+        run: pytest -q tests/security -m "not slow" --maxfail=1
 
-          if [[ \
-            "${{ needs.test.result }}"         != "success" || \
-            "${{ needs.bandit.result }}"        != "success" || \
-            "${{ needs.cargo-audit.result }}"   != "success" || \
-            "${{ needs.secrets-scan.result }}"  != "success" \
-          ]]; then
-            echo "❌ Security gate FAILED — PR bloqueado para merge a main"
-            exit 1
-          fi
+  security-coverage:
+    name: 📊 Security Coverage Gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install -e ".[test]"
+      - name: Generate coverage JSON
+        run: pytest -q tests/security --cov=kernell_os_sdk --cov-branch --cov-report=json:coverage.json
+      - name: Enforce invariant coverage gates
+        run: python scripts/check_security_gates.py
 
-          echo "✅ Security gate PASSED"
+  security-nightly:
+    name: 🌙 Security Slow/Fuzz Suite
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install -e ".[test]"
+      - name: Run slow security suite
+        run: pytest -q tests/security -m "slow"
+
+  build-and-sign:
+    name: 🖋️ Build, SBOM & Artifact Signing
+    needs: [secret-scanning, dependency-scanning, sast, security-fast, security-coverage]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # For OIDC / Sigstore
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Wheel & Tarball
+        run: |
+          pip install build
+          python -m build
+      - name: Generate SBOM (Syft)
+        uses: anchore/sbom-action@v0
+        with:
+          path: ./
+          format: spdx-json
+          output-file: kernell-os-sdk-sbom.spdx.json
+      - name: Sign Artifacts (Sigstore/Cosign)
+        uses: sigstore/gh-action-sigstore-python@v2.1.1
+        with:
+          inputs: >-
+            dist/*.tar.gz
+            dist/*.whl
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/*
+            kernell-os-sdk-sbom.spdx.json

@@ -16,6 +16,7 @@ from kernell_os_sdk.config import KernellConfig
 from kernell_os_sdk.sandbox import ResourceLimits, AgentPermissions
 from kernell_os_sdk.identity import AgentPassport, SecurityError
 from kernell_os_sdk.gui import AgentGUI
+from kernell_os_sdk.dashboard import CommandCenter
 from kernell_os_sdk.telemetry import HardwareFingerprint
 from kernell_os_sdk.budget import TokenBudget
 from kernell_os_sdk.resilience import CircuitBreaker, CircuitOpenError

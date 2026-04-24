@@ -5,6 +5,7 @@ from kernell_os_sdk.security.intent_firewall import (
     DataSourceType, DataSinkType, PlanValidator
 )
 
+@pytest.mark.invariant("T3")
 def test_deterministic_hashing():
     """Test that PlanIR hashing is deterministic regardless of key order."""
     plan1 = PlanIR(

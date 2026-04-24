@@ -4,8 +4,7 @@ def install_seccomp():
     try:
         import seccomp
     except ImportError:
-        print("Warning: python3-seccomp not installed. Seccomp disabled.", file=sys.stderr)
-        return
+        raise RuntimeError("CRITICAL: python3-seccomp is missing. Seccomp isolation cannot be disabled in production. Install python3-seccomp.")
 
     # Default: KILL process
     filt = seccomp.SyscallFilter(defaction=seccomp.KILL)
@@ -30,16 +29,10 @@ def install_seccomp():
     ]
     
     for sc in allowed_syscalls:
-        try:
-            filt.add_rule(seccomp.ALLOW, sc)
-        except Exception:
-            pass
+        filt.add_rule(seccomp.ALLOW, sc)
 
     # --- openat con restricciones básicas ---
-    try:
-        filt.add_rule(seccomp.ALLOW, "openat")
-    except Exception:
-        pass
+    filt.add_rule(seccomp.ALLOW, "openat")
 
     # --- DENY explícito (defensa en profundidad) ---
     blocked = [
@@ -49,9 +42,6 @@ def install_seccomp():
     ]
     
     for sc in blocked:
-        try:
-            filt.add_rule(seccomp.KILL, sc)
-        except Exception:
-            pass
+        filt.add_rule(seccomp.KILL, sc)
             
     filt.load()

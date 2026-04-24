@@ -20,6 +20,10 @@ import logging
 import os
 from typing import Any, Dict
 
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 logger = logging.getLogger("KAP_KMS")
 
 
@@ -54,24 +58,24 @@ class LocalKMS(KMSProvider):
     """
 
     def __init__(self, private_key: bytes):
-        import nacl.signing
-        self._signer = nacl.signing.SigningKey(private_key)
-        self._verify_key = self._signer.verify_key
+        self._priv = Ed25519PrivateKey.from_private_bytes(private_key[:32])
+        self._pub = self._priv.public_key()
         logger.warning("local_kms_initialized — NOT production safe. Use ExternalKMS for mainnet.")
 
     def sign(self, message: bytes) -> bytes:
-        signed = self._signer.sign(message)
-        return signed.signature
+        return self._priv.sign(message)
 
     def public_key(self) -> bytes:
-        return bytes(self._verify_key)
+        return self._pub.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
 
     def verify(self, message: bytes, signature: bytes) -> bool:
-        import nacl.exceptions
         try:
-            self._verify_key.verify(message, signature)
+            self._pub.verify(signature, message)
             return True
-        except nacl.exceptions.BadSignatureError:
+        except InvalidSignature:
             return False
 
 
@@ -143,28 +147,29 @@ class EnvKMS(KMSProvider):
     """
 
     def __init__(self, env_var: str = "KERNELL_TX_PRIVATE_KEY"):
-        import nacl.signing
         raw = os.environ.get(env_var, "")
         if not raw:
             raise ValueError(f"Environment variable {env_var} not set")
         key_bytes = bytearray(bytes.fromhex(raw))
-        self._signer = nacl.signing.SigningKey(bytes(key_bytes))
-        self._verify_key = self._signer.verify_key
+        self._priv = Ed25519PrivateKey.from_private_bytes(bytes(key_bytes)[:32])
+        self._pub = self._priv.public_key()
         _secure_zero(key_bytes)
         # Also remove from environment
         os.environ[env_var] = "0" * len(raw)
         logger.info("env_kms_initialized — key read and zeroed from env")
 
     def sign(self, message: bytes) -> bytes:
-        return self._signer.sign(message).signature
+        return self._priv.sign(message)
 
     def public_key(self) -> bytes:
-        return bytes(self._verify_key)
+        return self._pub.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
 
     def verify(self, message: bytes, signature: bytes) -> bool:
-        import nacl.exceptions
         try:
-            self._verify_key.verify(message, signature)
+            self._pub.verify(signature, message)
             return True
-        except nacl.exceptions.BadSignatureError:
+        except InvalidSignature:
             return False

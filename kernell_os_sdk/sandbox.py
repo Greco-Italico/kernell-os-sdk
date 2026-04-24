@@ -131,8 +131,8 @@ class Sandbox:
             "--cap-drop=ALL",                          # Drop ALL Linux capabilities
             "--read-only",                             # Read-only root filesystem
             "--ipc=none",                              # No shared memory (prevents ptrace attacks)
-            # Mount /proc read-only to prevent /proc/<pid>/mem exfiltration
-            "--volume", "/proc:/host_proc:ro",
+            # C-09 FIX: NEVER mount host /proc — exposes env vars, PIDs, memory maps of all host processes
+            # Use 'docker stats' externally if process info is needed
             # tmpfs for writable areas inside the container
             "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
             "--tmpfs", "/var/tmp:rw,noexec,nosuid,size=128m",

@@ -107,13 +107,20 @@ class TransactionWAL:
         }
 
         if self._signing_key:
-            import nacl.signing
             import base64
-            signer = nacl.signing.SigningKey(self._signing_key)
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+            signer = Ed25519PrivateKey.from_private_bytes(self._signing_key[:32])
             canonical = json.dumps(checkpoint, sort_keys=True).encode()
-            sig = signer.sign(canonical).signature
+            sig = signer.sign(canonical)
             checkpoint["sig"] = base64.b64encode(sig).decode()
-            checkpoint["sig_pk"] = base64.b64encode(bytes(signer.verify_key)).decode()
+            checkpoint["sig_pk"] = base64.b64encode(
+                signer.public_key().public_bytes(
+                    encoding=serialization.Encoding.Raw,
+                    format=serialization.PublicFormat.Raw,
+                )
+            ).decode()
 
         return checkpoint
 
@@ -122,8 +129,8 @@ class TransactionWAL:
         """Verify a checkpoint signature (used by external auditors)."""
         import json
         import base64
-        import nacl.signing
-        import nacl.exceptions
+        from cryptography.exceptions import InvalidSignature
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
         sig = checkpoint.get("sig")
         sig_pk = checkpoint.get("sig_pk")
@@ -133,10 +140,12 @@ class TransactionWAL:
         clean = {k: v for k, v in checkpoint.items() if k not in ("sig", "sig_pk")}
         canonical = json.dumps(clean, sort_keys=True).encode()
         try:
-            vk = nacl.signing.VerifyKey(base64.b64decode(sig_pk))
-            vk.verify(canonical, base64.b64decode(sig))
+            Ed25519PublicKey.from_public_bytes(base64.b64decode(sig_pk)).verify(
+                base64.b64decode(sig),
+                canonical,
+            )
             return True
-        except nacl.exceptions.BadSignatureError:
+        except (InvalidSignature, ValueError, TypeError):
             return False
 
     def verify_integrity(self) -> Tuple[bool, int]:
