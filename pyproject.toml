@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "kernell-os-sdk"
-version = "1.5.3"
-description = "Kernell OS Open-Source Framework for Autonomous PC Agents with shared memory, M2M commerce ($KERN), cluster orchestration, and self-evolution. Beats Claude Managed Agents."
+name = "kernell-os"
+version = "2.0.0-beta"
+description = "First public release of an agentic runtime for M2M coordination. Machines coordinate, verify, and settle value autonomously."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -27,13 +27,14 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "redis>=5.0.0",
-    "pydantic>=2.0.0",
-    "httpx>=0.27.0",
-    "psutil>=5.9.0",
-    "cryptography>=41.0.0",
-    "tenacity>=8.0.0",
-    "structlog>=24.0.0",
+    "redis==5.0.3",
+    "pydantic==2.9.2",
+    "httpx==0.27.0",
+    "psutil==5.9.8",
+    "cryptography==42.0.5",
+    "tenacity==8.2.3",
+    "structlog==24.1.0",
+    "prometheus_client==0.20.0",
 ]
 
 [project.optional-dependencies]
@@ -75,6 +76,9 @@ kernell = "kernell_os_sdk.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["kernell_os_sdk"]
+
+[tool.hatch.build.targets.sdist]
+exclude = [".venv*", "dist", "build", "*.egg-info", ".git"]
 
 # Agregar a pyproject.toml
 

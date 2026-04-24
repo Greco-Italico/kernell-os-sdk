@@ -1,61 +1,78 @@
-<p align="center">
-  <h1 align="center">Kernell OS SDK</h1>
-  <p align="center">
-    <strong>Create AI Agents that earn and spend money autonomously.</strong>
-  </p>
-</p>
+<div align="center">
+  <img src="https://raw.githubusercontent.com/Greco-Italico/kernell-os-sdk/main/logo3d.png" alt="Kernell OS Logo" width="200" height="200">
+  
+  # Kernell OS
+  ### Machines coordinate, verify, and settle value autonomously.
 
-<p align="center">
-  <a href="https://pypi.org/project/kernell-os-sdk/"><img src="https://img.shields.io/pypi/v/kernell-os-sdk.svg" alt="PyPI version"></a>
-  <a href="https://kernell.site"><img src="https://img.shields.io/badge/Website-kernell.site-blue" alt="Website"></a>
-  <a href="#"><img src="https://img.shields.io/badge/Security-Docker%20Seccomp-green" alt="Security"></a>
-</p>
+  <br>
+  
+  ![Kernell OS Demo](https://raw.githubusercontent.com/Greco-Italico/kernell-os-sdk/main/docs/assets/demo_60s.gif)
 
-## The Problem
-Most AI Agents are just glorified chatbots or static workflows. Even powerful ones like Claude Computer Use or Open Interpreter run wild on your machine without isolation, and none of them can interact with the real economy or pay each other for services.
+  <br>
+</div>
 
-## The Solution
-Kernell OS is the **AWS + Stripe + OS** for AI Agents.
-We don't compete with Claude or Open Interpreter; we **absorb** them. Kernell OS provides a unified **Capability Layer** (Adapters for GUI, Terminal, APIs), a zero-trust **Governance Layer** (Docker Sandbox + Policy Engine), and an integrated **Economy Layer** ($KERN Wallet).
+Kernell OS is an agentic runtime where multiple AI systems collaborate, reuse accumulated knowledge, and transact value securely.
 
-Your agent starts with `$0`. It sells idle compute to earn `$KERN`, and then uses that money to buy data scraping, API calls, or cognitive cycles from *other* agents. **Zero human intervention.**
+This is not another framework for LLM wrappers. This is **infrastructure for autonomous machine-to-machine economies**.
 
 ---
 
-### ⚡ Get Started in 2 Minutes
+## The Landscape
+
+| System | Generates Code | Remembers Architecture | Coordinates Agents | Settles M2M Value |
+| :--- | :---: | :---: | :---: | :---: |
+| **Copilots** | ✅ | ❌ | ❌ | ❌ |
+| **Agent Frameworks** | ✅ | ⚠️ | ⚠️ | ❌ |
+| **Kernell OS** | ✅ | ✅ | ✅ | ✅ |
+
+---
+
+## How It Works
+
+Kernell OS fundamentally shifts how LLMs interact with code, infrastructure, and economics:
+
+1. 🔀 **Cognitive Router v2**: Evaluates tasks contextually. If an architecture is unknown, it routes to premium reasoning models (e.g., DeepSeek-V3). If the architecture is known, it routes to hyper-cheap local models ($0) to just write the glue code.
+2. 🧠 **Semantic Memory Graph**: Doesn't cache strings. It learns and traverses architectural paths, reusing proven dependencies and pruning toxic routes via the **Dual Confidence Model**.
+3. 🛡️ **Intent Firewall**: Untrusted AI execution is halted. Every action (syscalls, file writes, outbound requests) is sandbox-verified before touching the host system.
+4. 💰 **Escrow Engine**: Agents are financially bound. Kernell holds execution value in cryptographic escrow, releasing funds ($KERN) only upon verified, monotonic success.
+
+---
+
+## Quickstart
+
+Stop building prototypes. Boot your first agentic economy in seconds.
 
 ```bash
-pip install kernell-os-sdk
-```
+# 1. Install the runtime
+pip install kernell-os
 
-```python
-from kernell_os_sdk import Agent, Orchestrator
+# 2. Scaffold a new environment
+kernell init
 
-# 1. Initialize a sovereign agent (Balance: $0)
-agent = Agent(name="MoneyBot")
+# 3. Boot the execution engine, Memory Graph, and Gateway
+kernell start
 
-# 2. Agent sells local idle compute to the network
-agent.sell_idle_compute(minutes=10)
-print(f"Balance: {agent.wallet.balance} KERN") # Output: +5.2 KERN
-
-# 3. Agent buys a service autonomously via M2M Escrow
-agent.pay_peer(target="ScraperBot", amount=2.0, task="Fetch trending tickers")
+# 4. Run the 60-second interactive investor demo
+kernell demo
 ```
 
 ---
 
-## 🛡️ Security First: Zero-Trust Sandbox
-Giving an agent a wallet and terminal access is dangerous. We fixed that.
-Kernell OS runs your agent in an isolated **Docker + Seccomp** container:
-- Dropped all Linux capabilities (`--cap-drop=ALL`)
-- Read-only filesystem (`--read-only`)
-- Strict Regex Policy Engine for all commands.
+## Expected Output
+
+Upon running `kernell demo`, your browser will launch the **Control Plane Dashboard**. 
+
+You will visually trace:
+* 🟣 **Path Intelligence Hit**: The system bypassing generation and retrieving an entire architectural sub-graph.
+* 🔴 **Firewall Freeze**: The system halting a malicious external dependency request for human-in-the-loop approval.
+* 🟢 **Escrow Settlement**: The smart contract releasing $KERN funds upon successful test execution.
+
+*(See the placeholder GIF at the top for reference)*
 
 ---
 
-## 🎁 Launch Airdrop: 10,000 $KERN
-We are seeding the M2M economy. 
-**⭐ Star this repository** and DM us on X/Twitter to get your API key loaded with **10,000 $KERN** so your agent can start buying services today.
-
-## Documentation
-Full documentation available at [kernell.site/docs](https://kernell.site)
+<div align="center">
+  <br>
+  <i>This is not a copilot.</i><br>
+  <b>This is infrastructure for autonomous systems.</b>
+</div>
