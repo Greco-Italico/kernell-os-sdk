@@ -29,6 +29,8 @@ from .types import (
 from .decomposer import TaskDecomposer, DecomposerTrainingCollector
 from .summarizer import RollingSummarizer
 from .verifier import SelfVerifier
+from .telemetry_collector import TelemetryCollector
+from .classifier_pro import ClassifierProClient, ProClassification
 
 logger = logging.getLogger("kernell.router.engine")
 
@@ -75,6 +77,11 @@ class IntelligentRouter:
         verify_confidence_threshold: float = 0.70,
         has_large_local: bool = False,
         monthly_budget_usd: Optional[float] = None,
+        telemetry: Optional[TelemetryCollector] = None,
+        classifier_pro: Optional[ClassifierProClient] = None,
+        hardware_tier: str = "unknown",
+        ram_gb: int = 0,
+        has_gpu: bool = False,
     ):
         # Core components
         self._decomposer = TaskDecomposer(
@@ -98,6 +105,13 @@ class IntelligentRouter:
 
         # Feedback collection for fine-tuning
         self._training_collector = DecomposerTrainingCollector()
+
+        # Data Flywheel & Cloud API
+        self._telemetry = telemetry or TelemetryCollector()
+        self._classifier_pro = classifier_pro
+        self._hardware_tier = hardware_tier
+        self._ram_gb = ram_gb
+        self._has_gpu = has_gpu
 
         # Budget tracking
         self._budget_usd = monthly_budget_usd
@@ -124,9 +138,29 @@ class IntelligentRouter:
         logger.info(f"Router: executing task ({len(task)} chars)")
         t0 = time.monotonic()
 
-        # Step 1: Decompose
+        # Step 1: Decompose (Local)
         subtasks = self._decomposer.decompose(task)
-        logger.info(f"Decomposed into {len(subtasks)} subtasks")
+        logger.info(f"Decomposed into {len(subtasks)} subtasks locally")
+
+        # Step 1.5: Escalation Check (Classifier-Pro API)
+        if self._classifier_pro:
+            avg_conf = sum(s.confidence for s in subtasks) / max(1, len(subtasks))
+            max_diff = max((s.difficulty for s in subtasks), default=1)
+            
+            if self._classifier_pro.should_consult_pro(avg_conf, max_diff):
+                logger.info("Escalating routing decision to Classifier-Pro API")
+                pro_decision = self._classifier_pro.classify(
+                    task=task,
+                    local_subtasks=[s.__dict__ for s in subtasks],
+                    hardware_tier=self._hardware_tier,
+                    ram_gb=self._ram_gb,
+                    has_gpu=self._has_gpu,
+                )
+                
+                # Rehydrate subtasks from API decision
+                if pro_decision.subtasks:
+                    subtasks = [SubTask(**s) for s in pro_decision.subtasks]
+                    logger.info(f"Classifier-Pro returned {len(subtasks)} optimized subtasks")
 
         # Step 2: Execute in dependency order
         results: List[ExecutionResult] = []
@@ -140,6 +174,19 @@ class IntelligentRouter:
             result = self._execute_subtask(subtask, task)
             results.append(result)
             completed_ids.add(subtask.id)
+
+            # Record telemetry for Data Flywheel
+            self._telemetry.record_from_result(
+                task=task,
+                subtask_desc=subtask.description,
+                predicted_difficulty=subtask.difficulty,
+                predicted_tier=subtask.target_tier.value,
+                confidence=subtask.confidence,
+                result=result,
+                hardware_tier=self._hardware_tier,
+                has_gpu=self._has_gpu,
+                ram_gb=self._ram_gb,
+            )
 
             # Feed result to summarizer
             if self._summarizer and result.success:
