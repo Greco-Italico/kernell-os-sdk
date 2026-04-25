@@ -23,32 +23,43 @@ class SandboxFS:
         if self._tmp:
             self._tmp.cleanup()
 
+FORBIDDEN_NODES = (
+    ast.Import,
+    ast.ImportFrom,
+)
+
+FORBIDDEN_NAMES = {
+    "__import__",
+    "eval",
+    "exec",
+    "open",
+    "compile",
+    "globals",
+    "locals",
+    "vars",
+    "dir",
+    "getattr",
+    "setattr",
+    "delattr",
+}
+
 def validate_code(code: str):
     if "\x00" in code:
         raise SandboxViolation("Null byte detected")
 
-    # Anti-payloads obvios
     try:
         tree = ast.parse(code)
     except SyntaxError as e:
-        # Invalid python code, allow the runtime to fail naturally or reject here
         raise SandboxViolation(f"Syntax error in submitted code: {e}")
         
     for node in ast.walk(tree):
+        if isinstance(node, FORBIDDEN_NODES):
+            raise SandboxViolation("Imports are not allowed")
+        
+        if isinstance(node, ast.Name):
+            if node.id in FORBIDDEN_NAMES:
+                raise SandboxViolation(f"Forbidden name: {node.id}")
+        
         if isinstance(node, ast.Attribute):
             if node.attr.startswith('__') and node.attr.endswith('__'):
                 raise SandboxViolation(f"Access to dunder attribute {node.attr} is not allowed")
-        elif isinstance(node, ast.Name):
-            if node.id in ("eval", "exec", "open", "__import__", "__builtins__"):
-                raise SandboxViolation(f"Use of {node.id} is not allowed")
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            # Dependiendo del nivel de restricción, bloquear imports. 
-            # Por ahora lo mantenemos flexible o definimos policy.
-            # En v1 bloqueamos os, subprocess, sys
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name in ("os", "subprocess", "sys", "socket"):
-                        raise SandboxViolation(f"Importing {alias.name} is not allowed")
-            elif isinstance(node, ast.ImportFrom):
-                if node.module in ("os", "subprocess", "sys", "socket"):
-                    raise SandboxViolation(f"Importing from {node.module} is not allowed")

@@ -78,99 +78,54 @@ class SubprocessRuntime(BaseRuntime):
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         if _is_production_env():
             raise SecurityError("SubprocessRuntime.execute blocked: KERNELL_ENV=production.")
-        # H-07: defense in depth — constructor opt-in is not enough for prod footguns.
         if os.environ.get("KERNELL_ALLOW_UNSAFE_SUBPROCESS_RUNTIME") != "1":
             raise RuntimeError(
                 "SubprocessRuntime.execute blocked: set KERNELL_ALLOW_UNSAFE_SUBPROCESS_RUNTIME=1 "
-                "for explicit non-production consent (in addition to allow_insecure_exec=True)."
+                "for explicit non-production consent."
             )
-        logger.warning("unsafe_subprocess_runtime_execute", extra={"pid": os.getpid()})
+        
         validate_code(request.code)
 
-        with SandboxFS() as sandbox_dir:
-            file_path = os.path.join(sandbox_dir, "main.py")
+        NSJAIL_PATH = "/usr/bin/nsjail"
+        # Determine config path based on installation layout
+        sdk_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        NSJAIL_CONFIG = os.path.join(os.path.dirname(sdk_root), "nsjail.cfg")
+        if not os.path.exists(NSJAIL_CONFIG):
+            NSJAIL_CONFIG = "nsjail.cfg"  # fallback for testing
 
-            wrapper = """
-SAFE_BUILTINS = {{
-    "print": print,
-    "range": range,
-    "len": len,
-    "int": int,
-    "float": float,
-    "str": str,
-    "bool": bool,
-    "dict": dict,
-    "list": list,
-    "tuple": tuple,
-    "set": set,
-    "type": type,
-    "isinstance": isinstance,
-    "Exception": Exception,
-    "ValueError": ValueError,
-}}
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".py") as f:
+            f.write(request.code.encode())
+            tmp_file = f.name
 
-code = {code}
+        try:
+            result = subprocess.run(
+                [
+                    NSJAIL_PATH,
+                    "--config",
+                    NSJAIL_CONFIG,
+                    "--",
+                    "python3",
+                    tmp_file,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=request.timeout,
+            )
 
-try:
-    exec(code, {{"__builtins__": SAFE_BUILTINS}}, {{}})
-except Exception as e:
-    import sys
-    print(f"Execution Error: {{type(e).__name__}}: {{e}}", file=sys.stderr)
-    sys.exit(1)
-"""
-            safe_code = wrapper.format(code=repr(request.code))
-            
-            with open(file_path, "w") as f:
-                f.write(safe_code)
+            return ExecutionResult(
+                stdout=result.stdout,
+                stderr=result.stderr,
+                exit_code=result.returncode
+            )
 
-            def preexec():
-                # Crear nueva sesión para matar a todos los hijos fácilmente
-                os.setsid()
-                self._limit_resources(request)
-                self._drop_privileges()
-
-            # Entorno limpio (no heredar env del sistema, solo inyectar explícitamente)
-            clean_env = {
-                "PYTHONUNBUFFERED": "1",
-                "PYTHONHASHSEED": "random", # Anti-DDoS hash collisions
-            }
-            if request.env:
-                clean_env.update(request.env)
-
-            # Comando: Python aislado
-            # -I: Isolated mode (ignora sys.path, site-packages, etc.)
-            # -S: No carga site (bloquea site-packages)
-            # -B: No escribe bytecode
-            cmd = ["python3", "-I", "-S", "-B", file_path]
-
-            try:
-                result = subprocess.run(
-                    cmd,
-                    cwd=sandbox_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=request.timeout,
-                    env=clean_env,
-                    preexec_fn=preexec if os.name != 'nt' else None
-                )
-
-                return ExecutionResult(
-                    stdout=result.stdout,
-                    stderr=result.stderr,
-                    exit_code=result.returncode
-                )
-
-            except subprocess.TimeoutExpired as e:
-                # Limpiar todos los procesos huérfanos del process group si timeout
-                return ExecutionResult(
-                    stdout=e.stdout.decode() if e.stdout else "",
-                    stderr=e.stderr.decode() if e.stderr else "TimeoutExpired: Process killed",
-                    exit_code=-1,
-                    timed_out=True
-                )
-            except Exception as e:
-                return ExecutionResult(
-                    stdout="",
-                    stderr=f"Runtime wrapper error: {str(e)}",
-                    exit_code=-2
-                )
+        except subprocess.TimeoutExpired as e:
+            return ExecutionResult(
+                stdout=e.stdout.decode() if e.stdout else "",
+                stderr=e.stderr.decode() if e.stderr else "TimeoutExpired",
+                exit_code=-1,
+                timed_out=True
+            )
+        finally:
+            if os.path.exists(tmp_file):
+                os.remove(tmp_file)

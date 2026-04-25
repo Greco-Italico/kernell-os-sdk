@@ -47,6 +47,23 @@ except ImportError:
     ROUTER_DASHBOARD_CARD_HTML = ""
     ROUTER_DASHBOARD_JS = ""
 
+def create_auth_middleware(app, auth_token: str):
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        if request.method == "OPTIONS":
+            return await call_next(request)
+        
+        auth = request.headers.get("Authorization")
+        if not auth or not auth.startswith("Bearer "):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=401, content={"detail": "Missing token"})
+            
+        token = auth.split(" ", 1)[1]
+        if not secrets.compare_digest(token, auth_token):
+            from fastapi.responses import JSONResponse
+            return JSONResponse(status_code=403, content={"detail": "Invalid token"})
+            
+        return await call_next(request)
 
 class CommandCenter:
     """Full Command Center dashboard for an SDK agent."""
@@ -65,14 +82,17 @@ class CommandCenter:
         self.app.add_middleware(
             CORSMiddleware,
             allow_origins=[
+                "https://app.kernell.ai",
                 f"http://127.0.0.1:{self.port}",
                 f"http://localhost:{self.port}",
             ],
-            allow_credentials=False,
-            allow_methods=["GET", "POST", "DELETE"],
-            allow_headers=["Authorization", "Content-Type"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
             max_age=600,
         )
+        
+        create_auth_middleware(self.app, self.auth_token)
         self._setup()
 
         # Mount Token Economy router API (if available)
