@@ -36,11 +36,24 @@ except ImportError:
 # Import from single source of truth
 from .constants import VALID_PERMISSIONS, RateLimiter  # noqa: F401
 
+# Router dashboard bridge (Token Economy integration)
+try:
+    from .router.dashboard_bridge import (
+        create_router_api, ROUTER_DASHBOARD_CARD_HTML, ROUTER_DASHBOARD_JS,
+    )
+    HAS_ROUTER_BRIDGE = True
+except ImportError:
+    HAS_ROUTER_BRIDGE = False
+    ROUTER_DASHBOARD_CARD_HTML = ""
+    ROUTER_DASHBOARD_JS = ""
+
 
 class CommandCenter:
     """Full Command Center dashboard for an SDK agent."""
 
-    def __init__(self, agent, port: int = 8500):
+    def __init__(self, agent, port: int = 8500,
+                 router_metrics=None, router_entrypoint=None,
+                 cost_estimator=None, hardware_config=None):
         self.agent = agent
         self.port = port
         self.auth_token = secrets.token_urlsafe(32)
@@ -61,6 +74,19 @@ class CommandCenter:
             max_age=600,
         )
         self._setup()
+
+        # Mount Token Economy router API (if available)
+        if HAS_ROUTER_BRIDGE:
+            token_budget = getattr(agent, 'budget', None)
+            router_api = create_router_api(
+                metrics_collector=router_metrics,
+                entrypoint=router_entrypoint,
+                cost_estimator=cost_estimator,
+                hardware_config=hardware_config,
+                token_budget=token_budget,
+            )
+            if router_api:
+                self.app.include_router(router_api, prefix="/api/router")
 
     def _auth(self, request: Request):
         auth = request.headers.get("Authorization", "")
@@ -251,6 +277,7 @@ input:checked+.sl:before{{transform:translateX(18px)}}
         <button class="btn btn-purple" onclick="addKey()">Add</button>
       </div>
     </div>
+    {ROUTER_DASHBOARD_CARD_HTML}
     <!-- Skills -->
     <div class="card"><h2><span>⚙️</span> Registered Skills</h2><div id="skillsBox"></div></div>
     <!-- Audit Log -->
@@ -349,6 +376,7 @@ async function refresh(){{
 renderPerms();renderKeys();
 setInterval(refresh,3000);
 setTimeout(refresh,500);
+{ROUTER_DASHBOARD_JS}
 </script>
 </body></html>"""
 
