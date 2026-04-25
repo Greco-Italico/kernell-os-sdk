@@ -40,12 +40,14 @@ def _verify_image_integrity() -> bool:
             return False
 
         actual_ref = result.stdout.strip()
-        expected_sha = AGENT_BASE_IMAGE.split("@sha256:")[-1]
-        if expected_sha not in actual_ref:
+        expected_sha = AGENT_BASE_IMAGE.split("@")[-1]
+        
+        # Debe coincidir de forma exacta
+        if not actual_ref.endswith(expected_sha):
             logger.critical(
                 f"⚠️  ALERTA DE SEGURIDAD: Digest de imagen no coincide!\n"
-                f"   Esperado: ...{expected_sha[:16]}\n"
-                f"   Actual: {actual_ref[:80]}"
+                f"   Esperado exacto: {expected_sha}\n"
+                f"   Actual completo: {actual_ref}"
             )
             return False
         return True

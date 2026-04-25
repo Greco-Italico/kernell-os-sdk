@@ -26,8 +26,12 @@ def main():
     
     install_seccomp()
     
-    raw = sys.stdin.read()
+    MAX_INPUT_SIZE = 1024 * 1024 * 5 # 5MB max
+    raw = sys.stdin.read(MAX_INPUT_SIZE + 1)
     if not raw:
+        sys.exit(1)
+    if len(raw) > MAX_INPUT_SIZE:
+        print(json.dumps({"error": "Payload too large"}))
         sys.exit(1)
         
     payload = json.loads(raw)

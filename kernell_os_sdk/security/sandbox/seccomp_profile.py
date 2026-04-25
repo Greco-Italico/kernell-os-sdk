@@ -45,3 +45,20 @@ def install_seccomp():
         filt.add_rule(seccomp.KILL, sc)
             
     filt.load()
+    
+    # Verificación de que seccomp está activo usando prctl
+    try:
+        import ctypes
+        import os
+        libc = ctypes.CDLL(None)
+        PR_GET_SECCOMP = 21
+        SECCOMP_MODE_FILTER = 2
+        mode = libc.prctl(PR_GET_SECCOMP, 0, 0, 0, 0)
+        if mode != SECCOMP_MODE_FILTER:
+            print("CRITICAL: Seccomp profile was loaded but prctl reports it is not active. Halting.")
+            sys.exit(1)
+    except Exception as e:
+        # Fallback si no podemos usar prctl, pero sabemos que load() pasó.
+        # Lo ideal es fallar cerrado si no podemos verificar.
+        print(f"CRITICAL: Cannot verify seccomp state: {e}")
+        sys.exit(1)
