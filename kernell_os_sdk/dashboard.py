@@ -47,7 +47,7 @@ except ImportError:
     ROUTER_DASHBOARD_CARD_HTML = ""
     ROUTER_DASHBOARD_JS = ""
 
-def create_auth_middleware(app, auth_token: str):
+def create_auth_middleware(app, tokens: dict):
     @app.middleware("http")
     async def auth_middleware(request: Request, call_next):
         if request.method == "OPTIONS":
@@ -59,10 +59,18 @@ def create_auth_middleware(app, auth_token: str):
             return JSONResponse(status_code=401, content={"detail": "Missing token"})
             
         token = auth.split(" ", 1)[1]
-        if not secrets.compare_digest(token, auth_token):
+        
+        role = None
+        for valid_token, assigned_role in tokens.items():
+            if secrets.compare_digest(token, valid_token):
+                role = assigned_role
+                break
+                
+        if not role:
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=403, content={"detail": "Invalid token"})
             
+        request.state.role = role
         return await call_next(request)
 
 class CommandCenter:
@@ -74,6 +82,11 @@ class CommandCenter:
         self.agent = agent
         self.port = port
         self.auth_token = secrets.token_urlsafe(32)
+        self.read_token = secrets.token_urlsafe(32)
+        self.tokens = {
+            self.auth_token: "admin",
+            self.read_token: "read"
+        }
         self._api_keys: Dict[str, str] = {}  # tool_name → masked key
         self._api_keys_raw: Dict[str, str] = {}  # tool_name → actual key
         self._audit_log: list = []
@@ -92,7 +105,7 @@ class CommandCenter:
             max_age=600,
         )
         
-        create_auth_middleware(self.app, self.auth_token)
+        create_auth_middleware(self.app, self.tokens)
         self._setup()
 
         # Mount Token Economy router API (if available)
