@@ -45,6 +45,8 @@ from .verifier import SelfVerifier, VerificationResult
 from .intelligent_router import IntelligentRouter
 from .metrics import RouterMetricsCollector, API_COST_TABLE
 from .estimator import CostEstimator
+from .telemetry_collector import TelemetryCollector, TelemetryConfig, TelemetryEvent
+from .classifier_pro import ClassifierProClient, ClassifierProConfig, ProClassification
 
 __all__ = [
     # Core types
@@ -73,4 +75,11 @@ __all__ = [
     "RouterMetricsCollector",
     "API_COST_TABLE",
     "CostEstimator",
+    # Data Flywheel
+    "TelemetryCollector",
+    "TelemetryConfig",
+    "TelemetryEvent",
+    "ClassifierProClient",
+    "ClassifierProConfig",
+    "ProClassification",
 ]
