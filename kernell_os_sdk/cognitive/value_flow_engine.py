@@ -18,6 +18,37 @@ from typing import Dict, List, Set, Optional
 
 getcontext().prec = 28
 
+ATOMIC_TRANSFER_LUA = """
+-- KEYS:
+-- 1: source_balance_key
+-- 2: target_balance_key
+-- 3: token_key
+-- ARGV:
+-- 1: amount
+-- 2: token_ttl_seconds
+-- 3: tx_id
+-- 4: source_id
+-- 5: target_id
+
+local source_balance = tonumber(redis.call("GET", KEYS[1]) or "0")
+local amount = tonumber(ARGV[1])
+
+if redis.call("EXISTS", KEYS[3]) == 1 then
+    return "ERR_TOKEN_USED"
+end
+
+if source_balance < amount then
+    return "ERR_INSUFFICIENT_FUNDS"
+end
+
+redis.call("DECRBYFLOAT", KEYS[1], amount)
+redis.call("INCRBYFLOAT", KEYS[2], amount)
+redis.call("SET", KEYS[3], "1", "EX", tonumber(ARGV[2]))
+redis.call("XADD", "kernell:ledger", "*", "tx_id", ARGV[3], "from", ARGV[4], "to", ARGV[5], "amount", ARGV[1])
+
+return "OK"
+"""
+
 class ValueFlowViolation(Exception):
     pass
 
@@ -37,24 +68,21 @@ class SingleUseCapability:
     expires_at: float = field(default_factory=lambda: time.time() + 60.0)
     
     is_consumed: bool = field(default=False)
-    _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
     
     def verify_and_consume(self, amount: Decimal):
-        with self._lock:
-            if self.is_consumed:
-                raise ValueFlowViolation("Capability Replay Attack: Token already consumed.")
-            if time.time() > self.expires_at:
-                raise ValueFlowViolation("Capability Expired.")
-            if amount > self.max_amount:
-                raise ValueFlowViolation(f"Capability Overbreadth: {amount} > {self.max_amount}")
-            self.is_consumed = True
+        if self.is_consumed:
+            raise ValueFlowViolation("Capability Replay Attack: Token already consumed.")
+        if time.time() > self.expires_at:
+            raise ValueFlowViolation("Capability Expired.")
+        if amount > self.max_amount:
+            raise ValueFlowViolation(f"Capability Overbreadth: {amount} > {self.max_amount}")
+        self.is_consumed = True
 
 @dataclass
 class ValueNode:
     node_id: str
     address: StrictAddress
     balance: Decimal
-    _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
 
 @dataclass
 class ValueEdge:
@@ -71,29 +99,32 @@ class ValueEdge:
         self.tx_hash = hashlib.sha256(payload.encode()).hexdigest()
 
 class ValueFlowGraph:
-    def __init__(self):
+    def __init__(self, redis_url: Optional[str] = None):
         self.nodes: Dict[str, ValueNode] = {}
         self.edges: List[ValueEdge] = []
-        self._graph_structure_lock = threading.Lock() # Solo para añadir nodos o auditar
         self.last_tx_hash: str = "0000000000000000000000000000000000000000000000000000000000000000"
         
         self.provenance: Dict[str, Dict[str, Decimal]] = {}
         self._total_system_value: Decimal = Decimal('0')
         self._emergency_freeze: bool = False
+        
+        self.redis_client = None
+        self._transfer_script_sha = None
+        if redis_url:
+            import redis
+            self.redis_client = redis.Redis.from_url(redis_url, decode_responses=True)
+            self._transfer_script_sha = self.redis_client.script_load(ATOMIC_TRANSFER_LUA)
 
     def activate_kill_switch(self):
-        with self._graph_structure_lock:
-            self._emergency_freeze = True
+        self._emergency_freeze = True
             
     def deactivate_kill_switch(self):
-        with self._graph_structure_lock:
-            self._emergency_freeze = False
+        self._emergency_freeze = False
 
     def register_node(self, node: ValueNode):
-        with self._graph_structure_lock:
-            self.nodes[node.node_id] = node
-            self.provenance[node.node_id] = {node.node_id: node.balance}
-            self._total_system_value += node.balance
+        self.nodes[node.node_id] = node
+        self.provenance[node.node_id] = {node.node_id: node.balance}
+        self._total_system_value += node.balance
 
     def validate_trajectory(self, source_id: str, target_id: str, amount: Decimal) -> None:
         source_node = self.nodes.get(source_id)
@@ -127,55 +158,58 @@ class ValueFlowGraph:
         if source_id == target_id:
             raise ValueFlowViolation("Self-transfers are not allowed.")
             
-        with self._graph_structure_lock:
+        tx_id = uuid.uuid4().hex
+        
+        # Redis Atomic Execution path
+        if self.redis_client:
+            source_key = f"balance:{source_id}"
+            target_key = f"balance:{target_id}"
+            token_key = f"token:{capability.capability_id}"
+            
+            try:
+                import redis
+                result = self.redis_client.evalsha(
+                    self._transfer_script_sha, 3,
+                    source_key, target_key, token_key,
+                    str(amount), "300", tx_id, source_id, target_id
+                )
+            except redis.exceptions.NoScriptError:
+                self._transfer_script_sha = self.redis_client.script_load(ATOMIC_TRANSFER_LUA)
+                result = self.redis_client.evalsha(
+                    self._transfer_script_sha, 3,
+                    source_key, target_key, token_key,
+                    str(amount), "300", tx_id, source_id, target_id
+                )
+            except Exception as e:
+                raise ValueFlowViolation(f"Redis execution failed: {e}")
+                
+            if result == "ERR_TOKEN_USED":
+                raise ValueFlowViolation("Capability Replay Attack: Token already consumed.")
+            elif result == "ERR_INSUFFICIENT_FUNDS":
+                raise ValueFlowViolation("Insufficient balance for flow.")
+            elif result != "OK":
+                raise ValueFlowViolation(f"Unexpected Redis response: {result}")
+        else:
+            # Fallback path for local execution (no local locks as they are unsafe and useless)
+            capability.verify_and_consume(amount)
             if source_id not in self.nodes or target_id not in self.nodes:
                 raise ValueFlowViolation("Nodes not registered.")
-            node_ids = sorted([source_id, target_id])
-            lock1 = self.nodes[node_ids[0]]._lock
-            lock2 = self.nodes[node_ids[1]]._lock
+                
+            self.validate_trajectory(source_id, target_id, amount)
+            source_node = self.nodes[source_id]
+            target_node = self.nodes[target_id]
             
-        with lock1:
-            with lock2:
-                # Revalidación del Kill Switch (Corte en caliente)
-                if self._emergency_freeze:
-                    raise ValueFlowViolation("SYSTEM FROZEN: Emergency Kill Switch is active.")
-                    
-                # 2-Phase Commit inside the dual node lock
-                capability.verify_and_consume(amount)
-                self.validate_trajectory(source_id, target_id, amount)
+            source_node.balance -= amount
+            target_node.balance += amount
                 
-                source_node = self.nodes[source_id]
-                target_node = self.nodes[target_id]
-                
-                proportion = amount / source_node.balance if source_node.balance > Decimal('0') else Decimal('0')
-                
-                transfer_provenance = {}
-                for origin_id, origin_amount in list(self.provenance.get(source_id, {}).items()):
-                    moved = origin_amount * proportion
-                    transfer_provenance[origin_id] = moved
-                    self.provenance[source_id][origin_id] = max(Decimal('0'), self.provenance[source_id][origin_id] - moved)
-                
-                for origin_id, moved_amount in transfer_provenance.items():
-                    if origin_id not in self.provenance.get(target_id, {}):
-                        self.provenance.setdefault(target_id, {})[origin_id] = Decimal('0')
-                    self.provenance[target_id][origin_id] += moved_amount
-                
-                source_node.balance -= amount
-                target_node.balance += amount
-                
-                tx_id = uuid.uuid4().hex
-                edge = ValueEdge(tx_id, source_id, target_id, amount, self.last_tx_hash)
-                
-                # Para la cadena de hashes usamos lock estructural (rápido, no compite con IO)
-                with self._graph_structure_lock:
-                    self.last_tx_hash = edge.tx_hash
-                    self.edges.append(edge)
-                
-                return tx_id
+        # Append logic (Ledger state)
+        edge = ValueEdge(tx_id, source_id, target_id, amount, self.last_tx_hash)
+        self.last_tx_hash = edge.tx_hash
+        self.edges.append(edge)
+        
+        return tx_id
 
     def audit_system_value(self):
-        # Para auditoría se bloquea todo (usar solo off-peak)
-        with self._graph_structure_lock:
-            current_total = sum(n.balance for n in self.nodes.values())
-            if current_total != self._total_system_value:
-                raise ValueFlowViolation("SYSTEMIC ERROR: Value conservation broken.")
+        current_total = sum(n.balance for n in self.nodes.values())
+        if current_total != self._total_system_value:
+            raise ValueFlowViolation("SYSTEMIC ERROR: Value conservation broken.")
