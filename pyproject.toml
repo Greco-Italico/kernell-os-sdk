@@ -27,14 +27,14 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 dependencies = [
-    "redis==5.0.3",
-    "pydantic==2.9.2",
-    "httpx==0.27.0",
-    "psutil==5.9.8",
-    "cryptography==42.0.5",
-    "tenacity==8.2.3",
-    "structlog==24.1.0",
-    "prometheus_client==0.20.0",
+    "redis>=5.0,<6",
+    "pydantic>=2.7,<3",
+    "httpx>=0.27,<1",
+    "psutil>=5.9,<7",
+    "cryptography>=42.0,<44",
+    "tenacity>=8.2,<10",
+    "structlog>=24.0,<26",
+    "prometheus_client>=0.20,<1",
 ]
 
 [project.optional-dependencies]
@@ -75,7 +75,7 @@ Documentation = "https://kernell.site/docs/sdk"
 kernell = "kernell_os_sdk.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["kernell_os_sdk"]
+packages = ["kernell_os_sdk", "kap_escrow"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [".venv*", "dist", "build", "*.egg-info", ".git"]

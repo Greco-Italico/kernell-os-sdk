@@ -40,11 +40,10 @@ def _verify_image_integrity() -> bool:
             return False
 
         actual_ref = result.stdout.strip()
-        expected_sha = AGENT_BASE_IMAGE.split("@sha256:")[-1]
-        actual_sha = actual_ref.split("@sha256:")[-1].strip() if "@sha256:" in actual_ref else actual_ref
+        expected_sha = AGENT_BASE_IMAGE.split("@")[-1]
         
-        # Comparación CRIPTOGRÁFICA EXACTA
-        if expected_sha != actual_sha:
+        # Debe coincidir de forma exacta
+        if not actual_ref.endswith(expected_sha):
             logger.critical(
                 f"⚠️  ALERTA DE SEGURIDAD: Digest de imagen no coincide!\n"
                 f"   Esperado exacto: {expected_sha}\n"
@@ -88,40 +87,58 @@ class Sandbox:
         self.container_name = f"kernell_agent_{self.agent_id}"
 
     def _validate_mount_path(self, path: str) -> None:
-        """Validates a host path before mounting it in the container."""
-        import os
+        """Validates a host path before mounting it in the container.
+
+        Security notes:
+        - Null byte injection prevention
+        - URL-encoding traversal decoding
+        - Resolved AND raw path are both checked to prevent symlink bypass
+          (e.g. /run/docker.sock → /var/run/docker.sock on modern Linux)
+        """
         from pathlib import Path
+        from urllib.parse import unquote
 
         # Null byte injection
         if '\x00' in path:
             raise ValueError(f"Null byte in path: {path!r}")
 
         # URL encoding traversal
-        from urllib.parse import unquote
         decoded = unquote(path)
 
         resolved = Path(decoded).resolve()
+        # Also check the raw (unresolved) path to catch symlink targets
+        # that may not match the resolved form on all distros.
+        raw = Path(decoded)
 
         forbidden_prefixes = [
             "/etc", "/root", "/var", "/sys",
-            "/dev", "/boot", "/usr/lib", "/proc"
+            "/dev", "/boot", "/usr/lib", "/proc", "/run",
         ]
-        forbidden_files = ["/var/run/docker.sock"]
+        # Explicit file block-list: covers both canonical paths and symlink aliases.
+        # /run/docker.sock is the resolved path on modern Linux (systemd);
+        # /var/run/docker.sock is the legacy symlink — both must be blocked.
+        forbidden_files = {
+            "/var/run/docker.sock",
+            "/run/docker.sock",
+        }
 
         if str(resolved) == "/":
             raise PermissionError("Mounting root filesystem is forbidden")
 
-        if any(str(resolved).startswith(p) for p in forbidden_prefixes):
-            raise PermissionError(f"Mounting path {resolved} is forbidden")
+        # Check both resolved and raw path against prefixes
+        for p in (str(resolved), str(raw)):
+            if any(p.startswith(prefix) for prefix in forbidden_prefixes):
+                raise PermissionError(f"Mounting path {resolved} is forbidden")
 
-        if str(resolved) in forbidden_files:
+        # Check both resolved and raw path against explicit block-list
+        if str(resolved) in forbidden_files or str(raw) in forbidden_files:
             raise PermissionError(f"Mounting {resolved} is explicitly blocked")
 
     def _build_docker_args(self) -> List[str]:
         args = [
             "/usr/bin/docker", "run", "-d",
             "--name", self.container_name,
-            "--runtime", "runsc",  # MANDATORY: gVisor enforced
+            "--runtime", self.limits.runtime,
             "--memory", f"{self.limits.ram_mb}m",
             "--memory-swap", f"{self.limits.ram_mb}m",  # No swap — prevent OOM abuse
             "--cpus", str(self.limits.cpu_cores),
@@ -165,6 +182,8 @@ class Sandbox:
         # For full computer use, we need X11/Wayland socket access
         if self.permissions.gui_automation:
             import os
+            if os.environ.get("ALLOW_UNSAFE_GUI") != "1":
+                raise PermissionError("GUI automation exposes X11 sockets (Escape Risk). Set ALLOW_UNSAFE_GUI=1 to bypass.")
             display = os.environ.get("DISPLAY", ":0")
             args.extend([
                 "-e", f"DISPLAY={display}",

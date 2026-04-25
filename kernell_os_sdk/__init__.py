@@ -2,7 +2,7 @@
 
 from importlib.metadata import version as _pkg_version, PackageNotFoundError
 try:
-    __version__ = _pkg_version("kernell-os-sdk")
+    __version__ = _pkg_version("kernell-os")
 except PackageNotFoundError:
     __version__ = "dev"
 

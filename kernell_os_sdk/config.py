@@ -66,5 +66,35 @@ class KernellConfig(BaseModel):
         return super().model_dump(**kwargs)
 
 
-# Global default config
-default_config = KernellConfig()
+# ── Lazy singleton ────────────────────────────────────────────────────────────
+# Instantiating KernellConfig() at module import time means any env vars set
+# AFTER the first import are silently ignored.  Use get_default_config() to
+# always receive a config that reflects the current environment.
+#
+# For backwards compatibility, `default_config` remains as a module-level
+# attribute but is now lazy: it is only created on first access.
+
+import functools as _functools
+
+
+@_functools.lru_cache(maxsize=1)
+def get_default_config() -> "KernellConfig":
+    """Return the process-wide default KernellConfig (lazy, cached).
+
+    Call ``get_default_config.cache_clear()`` in tests to reset between runs.
+    """
+    return KernellConfig()
+
+
+class _LazyConfig:
+    """Proxy that behaves like KernellConfig but defers construction."""
+
+    def __getattr__(self, name: str):
+        return getattr(get_default_config(), name)
+
+    def __repr__(self) -> str:
+        return repr(get_default_config())
+
+
+# Keep the name so existing `from kernell_os_sdk.config import default_config` works.
+default_config: "KernellConfig" = _LazyConfig()  # type: ignore[assignment]

@@ -3,11 +3,19 @@ A2A replay protection (E3 extended to inter-agent channel).
 
 - Timestamp skew window (milliseconds).
 - Nonce store with TTL + LRU cap (thread-safe).
+
+⚠️  MULTI-NODE WARNING: This implementation is single-process (in-memory).
+    In a multi-node or multi-process deployment, use A2AReplayGuardRedis
+    from `kernell_os_sdk.security.a2a_replay_redis` to share the nonce store
+    across all nodes via Redis. Without this, replay attacks across nodes
+    will not be detected.
 """
 from __future__ import annotations
 
+import os
 import threading
 import time
+import warnings
 from collections import OrderedDict
 class A2AReplayError(ValueError):
     """Raised when an A2A message is outside the time window or reuses a nonce."""
@@ -35,6 +43,16 @@ class A2AReplayGuard:
         self._max_nonces = int(max_nonces)
         self._nonce_seen_at: "OrderedDict[str, float]" = OrderedDict()
         self._lock = threading.Lock()
+
+        # HARD FAIL in production to prevent single-node replay bypass.
+        if os.environ.get("KERNELL_ENV", "development") == "production":
+            raise RuntimeError(
+                "A2AReplayGuard is using an IN-MEMORY nonce store. "
+                "In a multi-node or multi-process deployment this does NOT prevent "
+                "cross-node replay attacks. "
+                "Use A2AReplayGuardRedis (kernell_os_sdk.security.a2a_replay_redis) "
+                "and set KERNELL_REDIS_URL to a shared Redis instance."
+            )
 
     def _prune_unlocked(self, now: float) -> None:
         cutoff = now - self._nonce_ttl_sec

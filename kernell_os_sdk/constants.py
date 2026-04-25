@@ -31,7 +31,7 @@ VALID_PERMISSIONS = frozenset({
 # ── Command Safety ───────────────────────────────────────────────────────────
 # Commands that are NEVER allowed, regardless of permission state.
 # Checked by Agent._is_command_safe() before any shell execution.
-COMMAND_SAFELIST = {
+_COMMAND_SAFELIST_DICT = {
     # Navegación y listado
     "ls": {"args": ["-l", "-a", "-h", "-R", "-t"]},
     "pwd": {"args": []},
@@ -65,7 +65,14 @@ COMMAND_SAFELIST = {
     "date": {"args": []},
     "env": {"args": []},
     "uname": {"args": ["-a", "-r"]},
+    "find": {"args": ["-name", "-type", "-maxdepth", "-mindepth", "-not", "-path"]},
 }
+
+# COMMAND_SAFELIST: frozenset of allowed command names.
+# Use _COMMAND_SAFELIST_DICT if you need the full argument policy.
+# Exposed as frozenset so tests and external code can use set operations:
+#   e.g.  dangerous_cmds & COMMAND_SAFELIST  or  expected - COMMAND_SAFELIST
+COMMAND_SAFELIST: frozenset = frozenset(_COMMAND_SAFELIST_DICT.keys())
 
 
 # ── Rate Limiter ─────────────────────────────────────────────────────────────

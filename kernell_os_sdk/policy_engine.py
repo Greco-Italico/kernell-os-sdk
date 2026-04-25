@@ -111,6 +111,9 @@ class ExecPolicy(BaseModel):
     )
 
 
+COMMAND_SAFELIST = frozenset(ExecPolicy().allowed_commands.keys())
+
+
 class AgentCapabilities(BaseModel):
     """
     Complete capability manifest for an agent.
