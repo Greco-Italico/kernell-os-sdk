@@ -40,10 +40,11 @@ def _verify_image_integrity() -> bool:
             return False
 
         actual_ref = result.stdout.strip()
-        expected_sha = AGENT_BASE_IMAGE.split("@")[-1]
+        expected_sha = AGENT_BASE_IMAGE.split("@sha256:")[-1]
+        actual_sha = actual_ref.split("@sha256:")[-1].strip() if "@sha256:" in actual_ref else actual_ref
         
-        # Debe coincidir de forma exacta
-        if not actual_ref.endswith(expected_sha):
+        # Comparación CRIPTOGRÁFICA EXACTA
+        if expected_sha != actual_sha:
             logger.critical(
                 f"⚠️  ALERTA DE SEGURIDAD: Digest de imagen no coincide!\n"
                 f"   Esperado exacto: {expected_sha}\n"
@@ -120,7 +121,7 @@ class Sandbox:
         args = [
             "/usr/bin/docker", "run", "-d",
             "--name", self.container_name,
-            "--runtime", self.limits.runtime,
+            "--runtime", "runsc",  # MANDATORY: gVisor enforced
             "--memory", f"{self.limits.ram_mb}m",
             "--memory-swap", f"{self.limits.ram_mb}m",  # No swap — prevent OOM abuse
             "--cpus", str(self.limits.cpu_cores),

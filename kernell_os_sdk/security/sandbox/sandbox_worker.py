@@ -26,6 +26,10 @@ def main():
     
     install_seccomp()
     
+    # Timeout duro de ejecución (CPU/wall clock escape mitigation)
+    import signal
+    signal.alarm(5)
+    
     MAX_INPUT_SIZE = 1024 * 1024 * 5 # 5MB max
     raw = sys.stdin.read(MAX_INPUT_SIZE + 1)
     if not raw:
