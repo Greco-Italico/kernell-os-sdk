@@ -16,6 +16,10 @@ Anti-waste components:
   - RollingSummarizer: Compress context between steps (kills O(n²))
   - SelfVerifier: Validate before escalating (prevents premature spend)
   - DecomposerTrainingCollector: Auto-calibrate with implicit feedback
+
+Observability:
+  - RouterMetricsCollector: Full Prometheus-compatible metrics
+  - CostEstimator: Pre-execution cost simulation
 """
 from .types import (
     SubTask,
@@ -39,6 +43,8 @@ from .decomposer import (
 from .summarizer import RollingSummarizer
 from .verifier import SelfVerifier, VerificationResult
 from .intelligent_router import IntelligentRouter
+from .metrics import RouterMetricsCollector, API_COST_TABLE
+from .estimator import CostEstimator
 
 __all__ = [
     # Core types
@@ -63,4 +69,8 @@ __all__ = [
     "VerificationResult",
     # Main engine
     "IntelligentRouter",
+    # Observability
+    "RouterMetricsCollector",
+    "API_COST_TABLE",
+    "CostEstimator",
 ]
