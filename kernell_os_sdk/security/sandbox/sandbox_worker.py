@@ -41,7 +41,23 @@ def main():
     plan = PlanIR(**payload["plan"])
     token = CapabilityToken(**payload["token"])
     
-    orchestrator = OrchestratorStub(authority=None)
+    auth_key_b64 = os.environ.get("KERNELL_SANDBOX_AUTH_KEY")
+    if not auth_key_b64:
+        print(json.dumps({"error": "KERNELL_SANDBOX_AUTH_KEY environment variable is required"}))
+        sys.exit(1)
+        
+    try:
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+        import base64
+        key_bytes = base64.b64decode(auth_key_b64)
+        private_key = ed25519.Ed25519PrivateKey.from_private_bytes(key_bytes)
+        from kernell_os_sdk.security.intent_firewall import TokenAuthority
+        authority = TokenAuthority(private_key)
+    except Exception as e:
+        print(json.dumps({"error": f"Invalid KERNELL_SANDBOX_AUTH_KEY: {e}"}))
+        sys.exit(1)
+
+    orchestrator = OrchestratorStub(authority=authority)
     result = orchestrator.execute(plan, token)
     
     print(json.dumps(result))

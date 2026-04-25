@@ -169,6 +169,11 @@ class Sandbox:
                 "-e", f"DISPLAY={display}",
                 "-v", "/tmp/.X11-unix:/tmp/.X11-unix:ro"
             ])
+            
+        import os
+        auth_key = os.environ.get("KERNELL_SANDBOX_AUTH_KEY")
+        if auth_key:
+             args.extend(["-e", f"KERNELL_SANDBOX_AUTH_KEY={auth_key}"])
 
         args.append(AGENT_BASE_IMAGE)
         return args
