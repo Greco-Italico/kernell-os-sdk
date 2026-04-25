@@ -2,16 +2,31 @@ import subprocess
 import uuid
 import os
 import time
+import logging
 from kernell_os_sdk.security.ssrf import create_uds_client
+from .integrity import verify_artifacts, IntegrityError
+from .cgroup_limiter import VMResourceLimiter
+
+logger = logging.getLogger("kernell.firecracker.manager")
 class FirecrackerManager:
     """
     Manager to orchestrate Firecracker MicroVMs.
     Handles VM lifecycle: start, configure API socket, and cleanup.
     """
 
-    def __init__(self, kernel_path: str, rootfs_path: str):
+    def __init__(self, kernel_path: str, rootfs_path: str, artifact_manifest: dict = None):
         self.kernel = kernel_path
         self.rootfs = rootfs_path
+        self._cgroups: dict[str, VMResourceLimiter] = {}
+
+        # Supply chain integrity check at boot (fail-close)
+        if artifact_manifest:
+            try:
+                verify_artifacts(artifact_manifest)
+                logger.info("supply_chain_verified")
+            except IntegrityError as e:
+                logger.critical("supply_chain_violation", error=str(e))
+                raise
 
     def start_vm(self, memory_mb=128, cpu_count=1, rootfs_read_only: bool = True):
         vm_id = str(uuid.uuid4())
@@ -24,6 +39,20 @@ class FirecrackerManager:
             stderr=subprocess.PIPE,
             text=True
         )
+
+        # 2. Apply cgroups v2 resource limits
+        limiter = VMResourceLimiter(
+            vm_id=vm_id,
+            cpu_quota=cpu_count,
+            memory_mb=memory_mb,
+            pids_max=64,
+        )
+        try:
+            limiter.create()
+            limiter.attach(process.pid)
+            self._cgroups[vm_id] = limiter
+        except Exception:
+            logger.warning("cgroup_setup_skipped", vm_id=vm_id)
 
         # Wait for socket to be ready
         for _ in range(10):
@@ -138,3 +167,8 @@ class FirecrackerManager:
             
         if os.path.exists(socket_path):
             os.remove(socket_path)
+
+        # Destroy cgroup
+        limiter = self._cgroups.pop(vm_id, None)
+        if limiter:
+            limiter.destroy()
