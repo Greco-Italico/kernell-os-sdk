@@ -65,10 +65,18 @@ class BashExecutionTool(AgentTool):
         if not self._request_permission(agent_id, target=command):
             return "ERROR: Command blocked by Intent Firewall."
 
+        import shlex
         try:
-            # Note: In production, this targets the Docker container or Firecracker VM.
+            argv = shlex.split(command, posix=True)
+        except ValueError as e:
+            return f"ERROR: Malformed command: {e}"
+        if not argv:
+            return "ERROR: Empty command."
+
+        try:
+            # SECURITY: shell=False is mandatory. Never use shell=True.
             result = subprocess.run(
-                command, shell=True, cwd=cwd, text=True,
+                argv, shell=False, cwd=cwd, text=True,
                 capture_output=True, timeout=120
             )
             out = result.stdout + "\n" + result.stderr
@@ -88,6 +96,11 @@ class FileEditorTool(AgentTool):
     def execute(self, agent_id: str, filepath: str, target_content: str, replacement_content: str) -> str:
         if not self._request_permission(agent_id, target=filepath, payload=replacement_content):
             return "ERROR: File write blocked by Intent Firewall."
+
+        # SECURITY: Path containment — block traversal attacks
+        resolved = os.path.realpath(filepath)
+        if resolved.startswith(('/etc', '/root', '/proc', '/sys', '/var/run')):
+            return f"ERROR: Access to {resolved} is forbidden."
 
         if not os.path.exists(filepath):
             return f"ERROR: File {filepath} does not exist."
