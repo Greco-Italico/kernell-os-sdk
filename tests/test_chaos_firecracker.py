@@ -44,6 +44,7 @@ class TestChaosFirecracker:
             rt = FirecrackerRuntime("/fake/vmlinux", "/fake/rootfs", "/tmp/fcsnapshots")
             # Bypass billing/admission control for chaos logic testing
             rt.billing_manager.reserve.return_value = True
+            rt.billing_manager.get_account.return_value.plan.name = "free"
             rt.tenant_manager.allow_request.return_value = True
             rt._shared_secret = b"12345678901234567890123456789012"
             yield rt
@@ -129,7 +130,7 @@ class TestChaosFirecracker:
         # Rechazo debe ser inmediato (< 50ms)
         assert latency < 50
         assert res.exit_code == -1
-        assert "AuthenticationError" in res.stderr
+        assert "Invalid HMAC signature" in res.stderr
         
         # La VM DEBE ser destruida por seguridad (no devuelta al pool si hubo tampering)
         runtime.manager.cleanup_vm.assert_called_once()
