@@ -128,6 +128,63 @@ def cmd_demo(args):
     print("👉 CLICK [▶ START DEMO] in the top right corner.")
     print("--------------------------------------------------")
 
+def cmd_shadow(args):
+    """Shadow Mode commands: report, status, flush."""
+    import json as _json
+    from pathlib import Path
+
+    shadow_dir = Path.home() / ".kernell" / "shadow"
+
+    if args.shadow_command == "report":
+        # Load all shadow JSONL files and produce a summary
+        events = []
+        for f in shadow_dir.glob("shadow_*.jsonl"):
+            for line in open(f):
+                try:
+                    events.append(_json.loads(line))
+                except _json.JSONDecodeError:
+                    continue
+
+        if not events:
+            print("⚠️  No shadow events found yet.")
+            print("   Make sure you've added `patch_openai()` to your code.")
+            return
+
+        total_original = sum(e.get("original_cost_usd", 0) for e in events)
+        total_kernell = sum(e.get("kernell_cost_usd", 0) for e in events)
+        total_savings = sum(e.get("savings_usd", 0) for e in events)
+        savings_pct = (total_savings / total_original * 100) if total_original > 0 else 0
+
+        print("\n⬡ Kernell OS — Shadow Mode Report")
+        print("═" * 45)
+        print(f"  Total API calls observed:    {len(events)}")
+        print(f"  Baseline spend:              ${total_original:.2f}")
+        print(f"  Kernell optimized spend:     ${total_kernell:.2f}")
+        print(f"  ─────────────────────────────────────")
+        print(f"  💰 Verified Net Savings:     ${total_savings:.2f} ({savings_pct:.1f}%)")
+        print(f"═" * 45)
+
+    elif args.shadow_command == "status":
+        config_path = Path.home() / ".kernell" / "config.yaml"
+        if config_path.exists():
+            print("✅ Shadow Mode: Configured")
+            print(f"   Config: {config_path}")
+            print(f"   Logs:   {shadow_dir}/")
+            log_count = len(list(shadow_dir.glob("*.jsonl")))
+            print(f"   Log files: {log_count}")
+        else:
+            print("❌ Shadow Mode: Not configured")
+            print("   Run: curl -sSL https://install.kernell.ai | bash")
+
+    elif args.shadow_command == "flush":
+        from kernell_os_sdk.shadow.proxy import get_proxy
+        proxy = get_proxy()
+        if proxy:
+            proxy.flush()
+            print("✅ Shadow events flushed to disk.")
+        else:
+            print("⚠️  No active shadow proxy. Events are flushed automatically.")
+
 def main():
     parser = argparse.ArgumentParser(description="Kernell OS CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -147,6 +204,14 @@ def main():
     # Doctor
     parser_doctor = subparsers.add_parser("doctor", help="Check system readiness for Kernell OS")
     parser_doctor.set_defaults(func=cmd_doctor)
+
+    # Shadow
+    parser_shadow = subparsers.add_parser("shadow", help="Shadow Mode observation commands")
+    shadow_sub = parser_shadow.add_subparsers(dest="shadow_command")
+    shadow_sub.add_parser("report", help="Show savings report from observed API calls")
+    shadow_sub.add_parser("status", help="Check Shadow Mode configuration status")
+    shadow_sub.add_parser("flush", help="Flush buffered events to disk")
+    parser_shadow.set_defaults(func=cmd_shadow)
     
     args = parser.parse_args()
     if not args.command:
