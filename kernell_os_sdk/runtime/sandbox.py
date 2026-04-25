@@ -35,7 +35,13 @@ def validate_code(code: str):
         raise SandboxViolation(f"Syntax error in submitted code: {e}")
         
     for node in ast.walk(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
+        if isinstance(node, ast.Attribute):
+            if node.attr.startswith('__') and node.attr.endswith('__'):
+                raise SandboxViolation(f"Access to dunder attribute {node.attr} is not allowed")
+        elif isinstance(node, ast.Name):
+            if node.id in ("eval", "exec", "open", "__import__", "__builtins__"):
+                raise SandboxViolation(f"Use of {node.id} is not allowed")
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
             # Dependiendo del nivel de restricción, bloquear imports. 
             # Por ahora lo mantenemos flexible o definimos policy.
             # En v1 bloqueamos os, subprocess, sys

@@ -12,11 +12,13 @@ def close_fds():
             pass
 
 def drop_privileges():
-    try:
-        os.setgid(65534)
-        os.setuid(65534)
-    except Exception:
-        pass
+    if getattr(os, 'getuid', lambda: -1)() == 0:
+        try:
+            os.setgid(65534)
+            os.setuid(65534)
+        except Exception as e:
+            print(json.dumps({"error": f"Failed to drop privileges: {e}"}))
+            sys.exit(1)
 
 def main():
     close_fds()

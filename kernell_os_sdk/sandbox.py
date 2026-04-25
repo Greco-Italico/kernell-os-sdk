@@ -32,7 +32,7 @@ def _verify_image_integrity() -> bool:
     assert "REEMPLAZAR" not in AGENT_BASE_IMAGE, "Falta pin de SHA256 para Docker (KOS-015)"
     try:
         result = subprocess.run(
-            ["docker", "inspect", "--format={{index .RepoDigests 0}}", AGENT_BASE_IMAGE_TAG],
+            ["/usr/bin/docker", "inspect", "--format={{index .RepoDigests 0}}", AGENT_BASE_IMAGE_TAG],
             capture_output=True, text=True, timeout=15
         )
         if result.returncode != 0:
@@ -116,7 +116,7 @@ class Sandbox:
 
     def _build_docker_args(self) -> List[str]:
         args = [
-            "docker", "run", "-d",
+            "/usr/bin/docker", "run", "-d",
             "--name", self.container_name,
             "--runtime", self.limits.runtime,
             "--memory", f"{self.limits.ram_mb}m",
@@ -177,7 +177,7 @@ class Sandbox:
         try:
             # Remove existing container if present
             subprocess.run(
-                ["docker", "rm", "-f", self.container_name],
+                ["/usr/bin/docker", "rm", "-f", self.container_name],
                 capture_output=True, timeout=10
             )
 
@@ -206,18 +206,18 @@ class Sandbox:
         """Terminates the sandbox gracefully."""
         try:
             subprocess.run(
-                ["docker", "stop", self.container_name],
+                ["/usr/bin/docker", "stop", self.container_name],
                 capture_output=True, timeout=30
             )
             subprocess.run(
-                ["docker", "rm", self.container_name],
+                ["/usr/bin/docker", "rm", self.container_name],
                 capture_output=True, timeout=10
             )
             logger.info(f"Sandbox {self.container_name} stopped and removed.")
         except subprocess.TimeoutExpired:
             # Force kill
             subprocess.run(
-                ["docker", "kill", self.container_name],
+                ["/usr/bin/docker", "kill", self.container_name],
                 capture_output=True
             )
             logger.warning(f"Sandbox {self.container_name} force-killed.")
