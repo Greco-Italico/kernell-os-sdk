@@ -16,6 +16,7 @@ class IntelligentRouter:
         self.fc = firecracker_client
         self.metrics = metrics
         self.config = config
+        self.shadow_semaphore = asyncio.Semaphore(50)
 
     async def route(self, code: str):
         mode = self.config.get("FIRECRACKER_MODE", "off")
@@ -42,19 +43,23 @@ class IntelligentRouter:
         return result
 
     async def _firecracker_shadow(self, code, expected):
-        try:
-            fc_result = await self.fc.execute(code)
-            self.metrics.inc("firecracker_shadow_calls")
-            
-            fc_stdout = fc_result.get("stdout", "")
-            exp_stdout = expected.stdout if hasattr(expected, "stdout") else expected.get("stdout", "")
-            
-            if fc_stdout != exp_stdout:
-                self.metrics.inc("firecracker_divergence")
-                logger.warning("firecracker_divergence_detected", code=code[:50])
-        except Exception as e:
-            self.metrics.inc("firecracker_shadow_failures")
-            logger.debug(f"shadow_execution_failed: {e}")
+        async with self.shadow_semaphore:
+            try:
+                fc_result = await self.fc.execute(code)
+                self.metrics.inc("firecracker_shadow_calls")
+                
+                fc_stdout = fc_result.get("stdout", "")
+                fc_stderr = fc_result.get("stderr", "")
+                
+                exp_stdout = expected.stdout if hasattr(expected, "stdout") else expected.get("stdout", "")
+                exp_stderr = expected.stderr if hasattr(expected, "stderr") else expected.get("stderr", "")
+                
+                if fc_stdout != exp_stdout or fc_stderr != exp_stderr:
+                    self.metrics.inc("firecracker_divergence")
+                    logger.warning("firecracker_divergence_detected", code=code[:50])
+            except Exception as e:
+                self.metrics.inc("firecracker_shadow_failures")
+                logger.debug(f"shadow_execution_failed: {e}")
 
     # ------------------------
     # CANARY MODE
