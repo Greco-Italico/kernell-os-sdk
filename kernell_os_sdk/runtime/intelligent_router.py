@@ -16,14 +16,15 @@ class IntelligentRouter:
         self.fc = firecracker_client
         self.metrics = metrics
         self.config = config
-        self.shadow_semaphore = asyncio.Semaphore(50)
+        self.shadow_semaphore = asyncio.Semaphore(10)
         self.recent_shadow_results = []
+        self._lock = asyncio.Lock()
+        self._firecracker_enabled = self.config.get("FIRECRACKER_ENABLED", False)
 
     async def route(self, code: str):
         mode = self.config.get("FIRECRACKER_MODE", "off")
-        enabled = self.config.get("FIRECRACKER_ENABLED", False)
         
-        if not enabled or mode == "off":
+        if not self._firecracker_enabled or mode == "off":
             return await self._nsjail(code)
             
         if mode == "shadow":
@@ -34,17 +35,18 @@ class IntelligentRouter:
             
         return await self._nsjail(code)
 
-    def _record_shadow_result(self, success: bool):
-        self.recent_shadow_results.append(success)
-        if len(self.recent_shadow_results) > 10:
-            self.recent_shadow_results.pop(0)
-            
-        if not success:
-            failures = self.recent_shadow_results.count(False)
-            if failures >= 5:
-                logger.critical("auto_kill_switch_triggered: 5 shadow failures in last 10 requests")
-                self.config["FIRECRACKER_ENABLED"] = False
-                self.recent_shadow_results.clear()
+    async def _record_shadow_result(self, success: bool):
+        async with self._lock:
+            self.recent_shadow_results.append(success)
+            if len(self.recent_shadow_results) > 10:
+                self.recent_shadow_results.pop(0)
+                
+            if not success:
+                failures = self.recent_shadow_results.count(False)
+                if failures >= 5:
+                    logger.critical("auto_kill_switch_triggered: 5 shadow failures in last 10 requests")
+                    self._firecracker_enabled = False
+                    self.recent_shadow_results.clear()
 
     # ------------------------
     # SHADOW MODE
@@ -56,10 +58,20 @@ class IntelligentRouter:
         return result
 
     async def _firecracker_shadow(self, code, expected):
+        # Record circuit state
+        state_map = {"CLOSED": 0, "HALF_OPEN": 1, "OPEN": 2}
+        self.metrics.inc(f"firecracker_circuit_state_{state_map.get(self.fc.cb.state, 0)}")
+        
         async with self.shadow_semaphore:
             try:
                 fc_result = await self.fc.execute(code)
                 self.metrics.inc("firecracker_shadow_calls")
+                
+                # Record latency metric
+                if "_latency_ms" in fc_result:
+                    # In a real metrics system this would be an Observe, using inc for now
+                    self.metrics.inc("firecracker_latency_measured")
+                    logger.debug(f"firecracker_latency_ms: {fc_result['_latency_ms']}")
                 
                 fc_stdout = fc_result.get("stdout", "")
                 fc_stderr = fc_result.get("stderr", "")
@@ -71,7 +83,7 @@ class IntelligentRouter:
                     self.metrics.inc("firecracker_divergence")
                     logger.warning("firecracker_divergence_detected", code=code[:50])
                 
-                self._record_shadow_result(True)
+                await self._record_shadow_result(True)
             except Exception as e:
                 import httpx
                 if isinstance(e, httpx.TimeoutException):
@@ -79,7 +91,7 @@ class IntelligentRouter:
                     
                 self.metrics.inc("firecracker_shadow_failures")
                 logger.debug(f"shadow_execution_failed: {e}")
-                self._record_shadow_result(False)
+                await self._record_shadow_result(False)
 
     # ------------------------
     # CANARY MODE

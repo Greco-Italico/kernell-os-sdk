@@ -11,17 +11,20 @@ class CircuitBreaker:
         self.failures = 0
         self.last_failure_time = 0
         self.state = "CLOSED"  # CLOSED | OPEN | HALF_OPEN
+        self.half_open_in_flight = False
 
     def record_success(self):
         self.failures = 0
         self.recovery_time = self.base_recovery_time
         self.state = "CLOSED"
+        self.half_open_in_flight = False
 
     def record_failure(self):
         self.failures += 1
         self.last_failure_time = time.time()
+        self.state = "OPEN"
+        self.half_open_in_flight = False
         if self.failures >= self.failure_threshold:
-            self.state = "OPEN"
             # Backoff exponencial: 10s, 20s, 40s, max 60s
             exponent = self.failures - self.failure_threshold
             self.recovery_time = min(self.base_recovery_time * (2 ** exponent), 60)
@@ -32,10 +35,14 @@ class CircuitBreaker:
         if self.state == "OPEN":
             if time.time() - self.last_failure_time > self.recovery_time:
                 self.state = "HALF_OPEN"
+                self.half_open_in_flight = False
                 return True
             return False
         if self.state == "HALF_OPEN":
-            return True
+            if not self.half_open_in_flight:
+                self.half_open_in_flight = True
+                return True
+            return False
 
 class FirecrackerClient:
     def __init__(
@@ -48,6 +55,7 @@ class FirecrackerClient:
         self.token = token
         self.timeout = timeout
         self.cb = CircuitBreaker()
+        self.client = httpx.AsyncClient(timeout=self.timeout)
 
     async def execute(self, code: str) -> dict:
         if not self.cb.can_execute():
@@ -58,18 +66,21 @@ class FirecrackerClient:
         }
 
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.post(
-                    f"{self.base_url}/execute",
-                    json={"code": code},
-                    headers=headers,
-                )
+            start_ts = time.time()
+            resp = await self.client.post(
+                f"{self.base_url}/execute",
+                json={"code": code},
+                headers=headers,
+            )
+            latency_ms = (time.time() - start_ts) * 1000
 
             if resp.status_code != 200:
                 raise RuntimeError(f"BadStatus {resp.status_code}")
 
             self.cb.record_success()
-            return resp.json()
+            res = resp.json()
+            res["_latency_ms"] = latency_ms
+            return res
 
         except Exception as e:
             self.cb.record_failure()
