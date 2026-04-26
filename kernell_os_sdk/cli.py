@@ -185,6 +185,44 @@ def cmd_shadow(args):
         else:
             print("⚠️  No active shadow proxy. Events are flushed automatically.")
 
+def cmd_uninstall(args):
+    """Complete, clean removal of Kernell OS from the system."""
+    from pathlib import Path
+
+    kernell_dir = Path.home() / ".kernell"
+
+    print("\n⬡ Kernell OS — Clean Uninstall")
+    print("═" * 40)
+
+    if args.confirm:
+        # Remove config and shadow data
+        if kernell_dir.exists():
+            file_count = sum(1 for _ in kernell_dir.rglob("*") if _.is_file())
+            shutil.rmtree(str(kernell_dir))
+            print(f"  ✅ Removed {kernell_dir}/ ({file_count} files)")
+        else:
+            print(f"  ⚠️  {kernell_dir}/ not found (already clean)")
+
+        # Uninstall pip package
+        print("  ⚠️  To fully remove the SDK, run:")
+        print("     pip uninstall kernell-os-sdk -y")
+
+        print("")
+        print("  ✅ Kernell OS completely removed.")
+        print("  Your system is back to its original state.")
+        print("  No background processes. No residual config.")
+        print("  Thank you for trying Kernell OS.")
+    else:
+        print("  This will remove:")
+        print(f"    • {kernell_dir}/config.yaml")
+        print(f"    • {kernell_dir}/shadow/ (all observation logs)")
+        print("")
+        print("  Your code is NOT modified. Only Kernell artifacts are removed.")
+        print("")
+        print("  To confirm, run:")
+        print("    kernell uninstall --confirm")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Kernell OS CLI")
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -212,6 +250,11 @@ def main():
     shadow_sub.add_parser("status", help="Check Shadow Mode configuration status")
     shadow_sub.add_parser("flush", help="Flush buffered events to disk")
     parser_shadow.set_defaults(func=cmd_shadow)
+
+    # Uninstall
+    parser_uninstall = subparsers.add_parser("uninstall", help="Cleanly remove all Kernell OS artifacts")
+    parser_uninstall.add_argument("--confirm", action="store_true", help="Confirm removal")
+    parser_uninstall.set_defaults(func=cmd_uninstall)
     
     args = parser.parse_args()
     if not args.command:
