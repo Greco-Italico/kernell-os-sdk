@@ -85,3 +85,16 @@ class FirecrackerClient:
         except Exception as e:
             self.cb.record_failure()
             raise e
+
+    async def health(self) -> dict:
+        start_ts = time.time()
+        headers = {"Authorization": f"Bearer {self.token}"}
+        resp = await self.client.get(f"{self.base_url}/health", headers=headers, timeout=self.timeout)
+        latency_ms = (time.time() - start_ts) * 1000
+        
+        if resp.status_code != 200:
+            raise RuntimeError(f"BadStatus {resp.status_code}")
+            
+        data = resp.json()
+        data["latency_ms"] = latency_ms
+        return data

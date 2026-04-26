@@ -25,6 +25,10 @@ except Exception as e:
 # Concurrency limit to protect the node
 semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
 
+@app.get("/health")
+async def health(_=Depends(verify_token)):
+    return JSONResponse(content={"status": "ok"})
+
 @app.post("/execute")
 async def execute(
     req: ExecuteRequest,
