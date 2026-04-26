@@ -4,15 +4,17 @@ import time
 from typing import Optional
 
 class CircuitBreaker:
-    def __init__(self, failure_threshold=5, recovery_time=10):
+    def __init__(self, failure_threshold=5, base_recovery_time=10):
         self.failure_threshold = failure_threshold
-        self.recovery_time = recovery_time
+        self.base_recovery_time = base_recovery_time
+        self.recovery_time = base_recovery_time
         self.failures = 0
         self.last_failure_time = 0
         self.state = "CLOSED"  # CLOSED | OPEN | HALF_OPEN
 
     def record_success(self):
         self.failures = 0
+        self.recovery_time = self.base_recovery_time
         self.state = "CLOSED"
 
     def record_failure(self):
@@ -20,6 +22,9 @@ class CircuitBreaker:
         self.last_failure_time = time.time()
         if self.failures >= self.failure_threshold:
             self.state = "OPEN"
+            # Backoff exponencial: 10s, 20s, 40s, max 60s
+            exponent = self.failures - self.failure_threshold
+            self.recovery_time = min(self.base_recovery_time * (2 ** exponent), 60)
 
     def can_execute(self):
         if self.state == "CLOSED":
@@ -37,7 +42,7 @@ class FirecrackerClient:
         self,
         base_url: str,
         token: str,
-        timeout: float = 1.5,
+        timeout: float = 1.2,
     ):
         self.base_url = base_url
         self.token = token

@@ -17,6 +17,7 @@ class IntelligentRouter:
         self.metrics = metrics
         self.config = config
         self.shadow_semaphore = asyncio.Semaphore(50)
+        self.recent_shadow_results = []
 
     async def route(self, code: str):
         mode = self.config.get("FIRECRACKER_MODE", "off")
@@ -32,6 +33,18 @@ class IntelligentRouter:
             return await self._canary_mode(code)
             
         return await self._nsjail(code)
+
+    def _record_shadow_result(self, success: bool):
+        self.recent_shadow_results.append(success)
+        if len(self.recent_shadow_results) > 10:
+            self.recent_shadow_results.pop(0)
+            
+        if not success:
+            failures = self.recent_shadow_results.count(False)
+            if failures >= 5:
+                logger.critical("auto_kill_switch_triggered: 5 shadow failures in last 10 requests")
+                self.config["FIRECRACKER_ENABLED"] = False
+                self.recent_shadow_results.clear()
 
     # ------------------------
     # SHADOW MODE
@@ -57,9 +70,16 @@ class IntelligentRouter:
                 if fc_stdout != exp_stdout or fc_stderr != exp_stderr:
                     self.metrics.inc("firecracker_divergence")
                     logger.warning("firecracker_divergence_detected", code=code[:50])
+                
+                self._record_shadow_result(True)
             except Exception as e:
+                import httpx
+                if isinstance(e, httpx.TimeoutException):
+                    self.metrics.inc("firecracker_timeout_rate")
+                    
                 self.metrics.inc("firecracker_shadow_failures")
                 logger.debug(f"shadow_execution_failed: {e}")
+                self._record_shadow_result(False)
 
     # ------------------------
     # CANARY MODE
