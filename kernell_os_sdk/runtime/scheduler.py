@@ -45,22 +45,23 @@ class Scheduler:
     # Health computation
     # -----------------------------
     def compute_health(self, w: WorkerState) -> float:
-        score = 1.0
+        # Base health decremented by errors
+        score = max(1.0 - w.error_rate, 0.1)
+        load_factor = w.load_factor()
 
-        # penalización por latencia
-        score -= min(w.avg_latency_ms / 1000.0, 0.4)
+        # penalización por latencia (EMA) con decaimiento asintótico
+        score *= 1 / (1 + w.avg_latency_ms / 100.0)
 
-        # penalización por errores
-        score -= w.error_rate * 0.5
+        # penalización suave por carga (asegura un suelo de 0.05 para el goteo)
+        score *= max(1.0 - load_factor, 0.05)
 
-        # circuito abierto
+        # circuito abierto es casi fatal
         if w.circuit_state == "OPEN":
-            score *= 0.2
+            score *= 0.1
 
-        # saturación
-        load = w.load_factor()
-        if load > 0.8:
-            score *= 0.5
+        # castigo duro si está saturado (cliff)
+        if load_factor > 0.85:
+            score *= 0.3
 
         return max(score, 0.0)
 
