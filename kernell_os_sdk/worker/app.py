@@ -25,13 +25,25 @@ except Exception as e:
 # Concurrency limit to protect the node
 semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
 
+current_inflight = 0
+inflight_lock = asyncio.Lock()
+
+async def inc_inflight():
+    global current_inflight
+    async with inflight_lock:
+        current_inflight += 1
+
+async def dec_inflight():
+    global current_inflight
+    async with inflight_lock:
+        current_inflight -= 1
+
 @app.get("/health")
 async def health(_=Depends(verify_token)):
-    # semaphore._value returns permits available
-    inflight = MAX_CONCURRENCY - semaphore._value
+    global current_inflight
     return JSONResponse(content={
         "status": "ok",
-        "inflight": inflight,
+        "inflight": current_inflight,
         "max_concurrency": MAX_CONCURRENCY
     })
 
@@ -51,6 +63,7 @@ async def execute(
         )
 
     async with semaphore:
+        await inc_inflight()
         try:
             result = await asyncio.wait_for(
                 adapter.execute(req.code),
@@ -77,3 +90,5 @@ async def execute(
                     "exit_code": -1
                 }
             )
+        finally:
+            await dec_inflight()

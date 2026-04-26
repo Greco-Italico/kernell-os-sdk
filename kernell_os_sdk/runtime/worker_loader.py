@@ -32,18 +32,19 @@ async def reload_loop(scheduler, path):
                 if mtime != last_mtime:
                     new_workers = load_workers(path)
                     
-                    # Merge to preserve health states of existing workers
                     async with scheduler._lock:
-                        state_map = {w.url: w for w in scheduler.workers}
+                        old_map = {w.url: w for w in scheduler.workers}
                         merged = []
                         for nw in new_workers:
-                            if nw.url in state_map:
-                                existing = state_map[nw.url]
-                                existing.id = nw.id
-                                existing.max_concurrency = nw.max_concurrency
-                                merged.append(existing)
-                            else:
-                                merged.append(nw)
+                            if nw.url in old_map:
+                                ow = old_map[nw.url]
+                                nw.health_score = ow.health_score
+                                nw.error_rate = ow.error_rate
+                                nw.circuit_state = ow.circuit_state
+                                nw.avg_latency_ms = ow.avg_latency_ms
+                                nw.inflight = ow.inflight  # MUST PRESERVE
+                                nw.last_heartbeat = ow.last_heartbeat
+                            merged.append(nw)
                                 
                         scheduler.workers = merged
                     last_mtime = mtime
