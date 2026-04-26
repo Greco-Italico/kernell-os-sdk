@@ -1,0 +1,16 @@
+{
+  "workers": [
+    {
+      "id": "laptop-dev",
+      "url": "http://127.0.0.1:9000",
+      "max_concurrency": 8,
+      "enabled": true
+    },
+    {
+      "id": "future-kvm-1",
+      "url": "http://10.0.0.5:5000",
+      "max_concurrency": 16,
+      "enabled": false
+    }
+  ]
+}

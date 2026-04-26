@@ -27,7 +27,13 @@ semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
 
 @app.get("/health")
 async def health(_=Depends(verify_token)):
-    return JSONResponse(content={"status": "ok"})
+    # semaphore._value returns permits available
+    inflight = MAX_CONCURRENCY - semaphore._value
+    return JSONResponse(content={
+        "status": "ok",
+        "inflight": inflight,
+        "max_concurrency": MAX_CONCURRENCY
+    })
 
 @app.post("/execute")
 async def execute(
