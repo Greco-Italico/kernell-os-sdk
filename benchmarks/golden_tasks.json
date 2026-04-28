@@ -1,0 +1,62 @@
+[
+  {
+    "task_id": "json_table_easy_v1",
+    "difficulty": "easy",
+    "input": "Convert a JSON array of 3 users into a markdown table with columns id, name, and role.",
+    "expected_properties": ["markdown table", "id", "name", "role"]
+  },
+  {
+    "task_id": "regex_cleanup_easy_v1",
+    "difficulty": "easy",
+    "input": "Normalize log lines by extracting timestamp, level, and message fields.",
+    "expected_properties": ["timestamp", "level", "message"]
+  },
+  {
+    "task_id": "field_extract_easy_v1",
+    "difficulty": "easy",
+    "input": "Extract email and phone fields from mixed free-text customer records.",
+    "expected_properties": ["email", "phone", "extract"]
+  },
+  {
+    "task_id": "api_validation_medium_v1",
+    "difficulty": "medium",
+    "input": "Design input validation rules for a payments API with amount, currency, and idempotency key.",
+    "expected_properties": ["validate", "types", "error"]
+  },
+  {
+    "task_id": "unit_tests_medium_v1",
+    "difficulty": "medium",
+    "input": "Generate unit test cases for signup flow covering success, duplicate email, and weak password.",
+    "expected_properties": ["test", "duplicate", "password"]
+  },
+  {
+    "task_id": "structured_transform_medium_v1",
+    "difficulty": "medium",
+    "input": "Transform nested order JSON into flattened analytics rows with user, order_total, and item_count.",
+    "expected_properties": ["flatten", "order_total", "item_count"]
+  },
+  {
+    "task_id": "normalize_parser_medium_v1",
+    "difficulty": "medium",
+    "input": "Parse webhook payload variants and normalize into a canonical event schema.",
+    "expected_properties": ["parse", "normalize", "schema"]
+  },
+  {
+    "task_id": "architecture_hard_v1",
+    "difficulty": "hard",
+    "input": "Propose resilient architecture for multi-region API gateway with failover and observability.",
+    "expected_properties": ["architecture", "failover", "observability"]
+  },
+  {
+    "task_id": "debugging_hard_v1",
+    "difficulty": "hard",
+    "input": "Debug intermittent timeout in async worker pipeline with retries and dead-letter queue.",
+    "expected_properties": ["debug", "retry", "dead-letter"]
+  },
+  {
+    "task_id": "refactor_constraints_hard_v1",
+    "difficulty": "hard",
+    "input": "Refactor legacy billing module into clean interfaces while preserving backward compatibility constraints.",
+    "expected_properties": ["refactor", "interface", "compatibility"]
+  }
+]

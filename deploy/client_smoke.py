@@ -145,6 +145,10 @@ def main() -> int:
             return 7
 
         telemetry_events = telemetry.inspect_buffer()
+        if not telemetry_events:
+            _print("policy_signal", "FAILED (telemetry buffer empty)")
+            print(json.dumps(report, sort_keys=True))
+            return 8
         required_policy_fields = {"policy_route_predicted", "final_route_used"}
         has_policy_signal = any(
             bool(getattr(r, "model_used", "")) and getattr(r, "success", False)

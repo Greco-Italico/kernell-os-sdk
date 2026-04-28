@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Kernell Dashboard</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #e2e8f0; }
+    .card { padding: 10px; margin: 10px; border: 1px solid #334155; }
+  </style>
+</head>
+<body>
+<h1>🧠 Kernell Dashboard</h1>
+<div id="events"></div>
+<script>
+async function load() {
+  const res = await fetch('/events');
+  const data = await res.json();
+  const container = document.getElementById('events');
+  container.innerHTML = '';
+  data.reverse().forEach(e => {
+    const div = document.createElement('div');
+    div.className = 'card';
+    div.innerHTML = `
+      <b>route:</b> ${e.final_route_used || 'n/a'}<br/>
+      <b>policy:</b> ${e.policy_route_predicted || 'n/a'}<br/>
+      <b>latency:</b> ${e.latency_ms || 'n/a'} ms<br/>
+      <b>cost:</b> $${e.cost_usd || '0'}<br/>
+    `;
+    container.appendChild(div);
+  });
+}
+setInterval(load, 1500);
+load();
+</script>
+</body>
+</html>
