@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "kernell-os"
+name = "kernell-os-sdk"
 version = "2.2.0-beta"
 description = "First public release of an agentic runtime for M2M coordination. Machines coordinate, verify, and settle value autonomously."
 readme = "README.md"
