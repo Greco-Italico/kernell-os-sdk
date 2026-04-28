@@ -1,0 +1,57 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: kernell-sdk-redis
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: kernell-sdk-qdrant
+    ports:
+      - "6333:6333"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:6333/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  sdk-client:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.sdk-client
+      args:
+        SDK_PIP_SPEC: ${SDK_PIP_SPEC:-kernell-os-sdk}
+    container_name: kernell-sdk-client
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      QDRANT_URL: http://qdrant:6333
+      SDK_DISTRIBUTION_NAME: ${SDK_DISTRIBUTION_NAME:-kernell-os-sdk}
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+
+  sdk-client-chaos:
+    profiles: ["chaos"]
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.sdk-client
+      args:
+        SDK_PIP_SPEC: ${SDK_PIP_SPEC:-kernell-os-sdk}
+    container_name: kernell-sdk-client-chaos
+    environment:
+      # Intentionally degraded endpoints to validate controlled fallback behavior.
+      REDIS_HOST: invalid-redis-host
+      REDIS_PORT: "6379"
+      QDRANT_URL: http://127.0.0.1:1
+      SDK_DISTRIBUTION_NAME: ${SDK_DISTRIBUTION_NAME:-kernell-os-sdk}
+      SDK_CHAOS_MODE: "1"
+      SDK_SMOKE_FAILURE_MODE: "1"

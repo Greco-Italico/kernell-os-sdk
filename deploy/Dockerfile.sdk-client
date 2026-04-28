@@ -1,0 +1,22 @@
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /workspace
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Simulates a real client installation from package index.
+# Override SDK_PIP_SPEC to pin or use a test index package.
+ARG SDK_PIP_SPEC="kernell-os-sdk"
+RUN python -m pip install --upgrade pip setuptools wheel && \
+    python -m pip install "${SDK_PIP_SPEC}"
+
+COPY deploy/client_smoke.py /workspace/client_smoke.py
+
+CMD ["python", "/workspace/client_smoke.py"]

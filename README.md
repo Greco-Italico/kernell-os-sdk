@@ -182,6 +182,68 @@ Router and flywheel suites:
 python -m pytest tests/test_router.py tests/test_data_flywheel.py tests/test_policy_lite.py -q
 ```
 
+### Containerized "real client" validation
+
+Use this when you want to verify the same path as an external developer:
+installing the SDK with `pip` in a clean environment, not from local source.
+
+```bash
+cd kernell-os-sdk
+docker compose -f deploy/docker-compose.sdk-client.yml up --build --abort-on-container-exit
+```
+
+What this stack validates:
+
+- Clean installation from package index (`SDK_PIP_SPEC`, default `kernell-os-sdk`)
+- SDK import sanity from installed distribution
+- CLI availability (`kernell --help`)
+- Minimal router execution path (`IntelligentRouter.execute(...)`) with deterministic mock backend
+- Telemetry capture signal (`TelemetryCollector`) to protect the data-flywheel contract
+- Policy signal presence in telemetry (`policy_route_predicted`) to catch policy integration regressions
+- Graceful failure-mode path (no local models configured) without process crash
+- Baseline service dependencies (`redis` + `qdrant`) reachable in compose network
+- Structured CI-friendly report (JSON line with `install/import/cli/router/telemetry/policy/failure_mode`)
+
+Useful overrides:
+
+```bash
+# Test a pinned prerelease/build
+SDK_PIP_SPEC='kernell-os-sdk==2.2.0b1' \
+docker compose -f deploy/docker-compose.sdk-client.yml up --build --abort-on-container-exit
+
+# If distribution name differs on your package index:
+SDK_DISTRIBUTION_NAME='kernell-os-sdk' \
+docker compose -f deploy/docker-compose.sdk-client.yml up --build --abort-on-container-exit
+
+# Disable failure-mode probe when needed:
+SDK_SMOKE_FAILURE_MODE=0 \
+docker compose -f deploy/docker-compose.sdk-client.yml up --build --abort-on-container-exit
+
+# Optional: check expected telemetry artifact path too
+KERNELL_TELEMETRY_PATH=/tmp/kernell_telemetry/telemetry_buffer_latest.jsonl \
+docker compose -f deploy/docker-compose.sdk-client.yml up --build --abort-on-container-exit
+```
+
+Cleanup:
+
+```bash
+docker compose -f deploy/docker-compose.sdk-client.yml down -v
+```
+
+### Chaos profile (optional, antifragility checks)
+
+Run the dedicated chaos profile without blocking regular PR validation:
+
+```bash
+docker compose -f deploy/docker-compose.sdk-client.yml --profile chaos up --build --abort-on-container-exit sdk-client-chaos
+```
+
+Chaos profile expectations:
+
+- `install/import/cli/telemetry/policy/failure_mode` stay `ok`
+- `degraded` is `true` (degradation is detected and reported, not hidden)
+- controlled degradation is acceptable; process crash is not
+
 ---
 
 ## Current Status

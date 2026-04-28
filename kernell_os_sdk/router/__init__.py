@@ -52,6 +52,7 @@ from .telemetry_collector import TelemetryCollector, TelemetryConfig, TelemetryE
 from .classifier_pro import ClassifierProClient, ClassifierProConfig, ProClassification
 from .offline_labeler import OfflineLabeler, LabelConfig, LabeledExample
 from .policy_lite import PolicyLiteClient, PolicyLiteConfig
+from .semantic_cache import SemanticCache, CacheConfig, CacheStats
 
 __all__ = [
     # Core types
@@ -97,4 +98,8 @@ __all__ = [
     "OfflineLabeler",
     "LabelConfig",
     "LabeledExample",
+    # Semantic Cache
+    "SemanticCache",
+    "CacheConfig",
+    "CacheStats",
 ]
