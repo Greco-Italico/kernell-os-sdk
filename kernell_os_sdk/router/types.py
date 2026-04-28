@@ -100,3 +100,66 @@ class RouterStats:
         if self.total_subtasks == 0:
             return 0.0
         return (self.premium_api_executions / self.total_subtasks) * 100
+
+
+class PolicyRoute(str, Enum):
+    """Route decision produced by the Policy Model."""
+    LOCAL = "local"        # Free, Ollama/local LLM
+    CHEAP = "cheap"        # Groq/DeepSeek/Flash ($0.001-0.01)
+    PREMIUM = "premium"    # Claude/GPT ($0.05-2.00)
+    HYBRID = "hybrid"      # Decompose into sub-routes
+
+
+class RiskLevel(str, Enum):
+    """Risk assessment for a task."""
+    LOW = "low"        # Tolerates approximation (autocompletion, formatting)
+    MEDIUM = "medium"  # Requires coherence (standard code, Q&A)
+    HIGH = "high"      # Requires precision (payments, auth, security audit)
+
+
+@dataclass
+class PolicyDecision:
+    """
+    Canonical policy output contract.
+
+    This is what the Policy Model predicts — NOT difficulty,
+    but the economically optimal execution decision.
+
+    Used for:
+      1. Runtime routing (IntelligentRouter consumes this)
+      2. Telemetry persistence (ground truth for training)
+      3. Fine-tuning target label (what the model learns to predict)
+    """
+    route: PolicyRoute
+    confidence: float                       # 0.0-1.0, model certainty
+    needs_decomposition: bool = False       # True if task has 3+ independent subtasks
+    risk: RiskLevel = RiskLevel.LOW
+    expected_cost_usd: float = 0.0          # Pre-execution cost estimate
+    expected_latency_s: float = 0.0         # Pre-execution latency estimate
+    max_budget_usd: float = 0.0             # Max acceptable spend
+    policy_version: str = "v0"              # Model version for A/B tracking
+
+    def to_dict(self) -> dict:
+        return {
+            "route": self.route.value,
+            "confidence": self.confidence,
+            "needs_decomposition": self.needs_decomposition,
+            "risk": self.risk.value,
+            "expected_cost_usd": self.expected_cost_usd,
+            "expected_latency_s": self.expected_latency_s,
+            "max_budget_usd": self.max_budget_usd,
+            "policy_version": self.policy_version,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PolicyDecision":
+        return cls(
+            route=PolicyRoute(d.get("route", "cheap")),
+            confidence=float(d.get("confidence", 0.5)),
+            needs_decomposition=bool(d.get("needs_decomposition", False)),
+            risk=RiskLevel(d.get("risk", "low")),
+            expected_cost_usd=float(d.get("expected_cost_usd", 0.0)),
+            expected_latency_s=float(d.get("expected_latency_s", 0.0)),
+            max_budget_usd=float(d.get("max_budget_usd", 0.0)),
+            policy_version=str(d.get("policy_version", "v0")),
+        )

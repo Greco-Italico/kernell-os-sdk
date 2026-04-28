@@ -82,7 +82,17 @@ class TelemetryEvent:
     # ── Model Info ───────────────────────────────────────────────
     local_model_used: str = ""    # e.g. "qwen3:1.7b" (public model name, not sensitive)
     api_provider: str = ""        # "groq", "deepseek", "anthropic" (provider, not key)
-    
+
+    # ── Policy Model v2 (training signal) ────────────────────────
+    policy_route_predicted: str = ""   # "local", "cheap", "premium", "hybrid"
+    policy_confidence: float = 0.0     # Policy model's own confidence
+    policy_expected_cost: float = 0.0  # What policy estimated cost would be
+    policy_expected_latency: float = 0.0  # What policy estimated latency would be
+    policy_risk: str = ""              # "low", "medium", "high"
+    policy_version: str = ""           # "v0", "v1", etc. for A/B tracking
+    final_route_used: str = ""         # Actual route after all fallbacks
+    fallback_trigger: str = ""         # Why fallback happened: "verification_fail", "timeout", etc.
+
     def to_dict(self) -> dict:
         return asdict(self)
 

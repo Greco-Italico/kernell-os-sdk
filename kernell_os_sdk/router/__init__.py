@@ -28,6 +28,9 @@ from .types import (
     DifficultyLevel,
     ModelTier,
     TaskDomain,
+    PolicyDecision,
+    PolicyRoute,
+    RiskLevel,
 )
 from .model_registry import (
     ModelRegistry,
@@ -47,6 +50,7 @@ from .metrics import RouterMetricsCollector, API_COST_TABLE
 from .estimator import CostEstimator
 from .telemetry_collector import TelemetryCollector, TelemetryConfig, TelemetryEvent
 from .classifier_pro import ClassifierProClient, ClassifierProConfig, ProClassification
+from .offline_labeler import OfflineLabeler, LabelConfig, LabeledExample
 
 __all__ = [
     # Core types
@@ -82,4 +86,12 @@ __all__ = [
     "ClassifierProClient",
     "ClassifierProConfig",
     "ProClassification",
+    # Policy Model
+    "PolicyDecision",
+    "PolicyRoute",
+    "RiskLevel",
+    # Offline Labeler
+    "OfflineLabeler",
+    "LabelConfig",
+    "LabeledExample",
 ]
