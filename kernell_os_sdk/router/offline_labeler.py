@@ -44,6 +44,7 @@ class LabelConfig:
     latency_weight: float = 0.1      # Penalty per second
     escalation_penalty: float = 0.3  # Penalty per fallback step
     min_confidence: float = 0.5      # Floor for ambiguous labels
+    verifier_min_score: float = 0.75 # Below this, avoid aggressive downgrades
 
 
 @dataclass
@@ -72,6 +73,8 @@ class LabeledExample:
     penalty: float                    # How much the actual route cost vs optimal
     label_confidence: float           # How confident we are in this label
     label_reason: str                 # Why this label was assigned
+    error_type: str = ""              # underestimation | overestimation | none
+    error_severity: float = 0.0       # economic impact estimate
 
 
 class OfflineLabeler:
@@ -101,6 +104,8 @@ class OfflineLabeler:
         cost = event.get("cost_usd", 0.0)
         latency = event.get("latency_ms", 0.0) / 1000.0
         tokens = event.get("tokens_in", 0) + event.get("tokens_out", 0)
+        verified = bool(event.get("verified", event.get("verifier_accepted", True)))
+        verifier_score = float(event.get("self_verifier_score", event.get("verifier_confidence", 1.0)))
 
         # Normalize tier names to route names
         actual_route = self._tier_to_route(actual_tier)
@@ -114,8 +119,13 @@ class OfflineLabeler:
 
         # Compute optimal route and penalty
         optimal, reason, penalty, confidence = self._compute_optimal(
-            success, actual_route, was_escalated, chain, cost, latency, tokens
+            success, actual_route, was_escalated, chain, cost, latency, tokens,
+            verified=verified, verifier_score=verifier_score
         )
+
+        # Gray-zone verifier confidence: allow, but down-weight training signal.
+        if verifier_score < 0.85:
+            confidence *= 0.7
 
         if confidence < self.config.min_confidence:
             self._stats["ambiguous"] += 1
@@ -142,6 +152,8 @@ class OfflineLabeler:
             penalty=round(penalty, 6),
             label_confidence=round(confidence, 3),
             label_reason=reason,
+            error_type=self._derive_error_type(predicted_route, actual_route, optimal, was_escalated),
+            error_severity=round(self._derive_error_severity(penalty, cost, latency), 6),
         )
 
     def label_batch(self, events: List[dict]) -> List[LabeledExample]:
@@ -182,7 +194,8 @@ class OfflineLabeler:
 
     # ── Private ──────────────────────────────────────────────────
 
-    def _compute_optimal(self, success, actual, escalated, chain, cost, latency, tokens):
+    def _compute_optimal(self, success, actual, escalated, chain, cost, latency, tokens,
+                         verified: bool = True, verifier_score: float = 1.0):
         """Core labeling logic: what SHOULD the route have been?"""
         cfg = self.config
 
@@ -197,7 +210,12 @@ class OfflineLabeler:
         # Case 3: Succeeded at premium without escalation → check if was necessary
         if success and actual == "premium" and not escalated:
             # If cost was very low for premium, it was probably easy → should have been cheap
-            if cost < 0.02 and tokens < 500:
+            if (
+                cost < 0.02
+                and tokens < 500
+                and verified
+                and verifier_score >= cfg.verifier_min_score
+            ):
                 penalty = cost - ROUTE_COSTS.get("cheap", 0.005)
                 return "cheap", "premium_overkill_low_tokens", penalty, 0.75
             # Otherwise premium was warranted
@@ -225,11 +243,26 @@ class OfflineLabeler:
                 return "premium", "cheap_failed_to_premium", penalty, 0.85
 
         # Case 5: Failed entirely
-        if not success:
+        if not success or not verified:
             return "premium", "all_failed_needs_premium", cost, 0.60
 
         # Fallback: use actual route with low confidence
         return actual, "ambiguous_actual_used", 0.0, 0.50
+
+    @staticmethod
+    def _derive_error_type(predicted: str, actual: str, optimal: str, was_escalated: bool) -> str:
+        if was_escalated or predicted == "local" and optimal == "premium":
+            return "underestimation"
+        if predicted == "premium" and optimal in ("local", "cheap"):
+            return "overestimation"
+        if actual != optimal:
+            return "misroute"
+        return "none"
+
+    @staticmethod
+    def _derive_error_severity(penalty: float, cost: float, latency: float) -> float:
+        # Weight direct waste first, then residual execution cost, then latency impact.
+        return max(0.0, penalty) + (max(0.0, cost) * 0.5) + (max(0.0, latency) * 0.01)
 
     @staticmethod
     def _tier_to_route(tier: str) -> str:

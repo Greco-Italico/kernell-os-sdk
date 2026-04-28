@@ -9,7 +9,35 @@ Usage:
     start_metrics_server(port=9090)
 """
 
-from prometheus_client import Counter, Histogram, Gauge, start_http_server
+try:
+    from prometheus_client import Counter, Histogram, Gauge, start_http_server
+except ImportError:  # pragma: no cover - runtime fallback path
+    class _NoOpMetric:
+        def labels(self, *args, **kwargs):
+            return self
+
+        def observe(self, *args, **kwargs):
+            return None
+
+        def inc(self, *args, **kwargs):
+            return None
+
+        def set(self, *args, **kwargs):
+            return None
+
+    _NOOP = _NoOpMetric()
+
+    def Counter(*args, **kwargs):  # type: ignore
+        return _NOOP
+
+    def Histogram(*args, **kwargs):  # type: ignore
+        return _NOOP
+
+    def Gauge(*args, **kwargs):  # type: ignore
+        return _NOOP
+
+    def start_http_server(*args, **kwargs):  # type: ignore
+        return None
 
 # ── Latency ──────────────────────────────────────────────────────────────────
 EXECUTION_LATENCY = Histogram(

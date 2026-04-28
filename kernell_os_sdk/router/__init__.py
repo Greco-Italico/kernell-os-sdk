@@ -51,6 +51,7 @@ from .estimator import CostEstimator
 from .telemetry_collector import TelemetryCollector, TelemetryConfig, TelemetryEvent
 from .classifier_pro import ClassifierProClient, ClassifierProConfig, ProClassification
 from .offline_labeler import OfflineLabeler, LabelConfig, LabeledExample
+from .policy_lite import PolicyLiteClient, PolicyLiteConfig
 
 __all__ = [
     # Core types
@@ -90,6 +91,8 @@ __all__ = [
     "PolicyDecision",
     "PolicyRoute",
     "RiskLevel",
+    "PolicyLiteClient",
+    "PolicyLiteConfig",
     # Offline Labeler
     "OfflineLabeler",
     "LabelConfig",

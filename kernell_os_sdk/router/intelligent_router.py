@@ -24,13 +24,14 @@ from typing import Dict, List, Optional, Protocol
 
 from .types import (
     SubTask, ExecutionResult, RouterStats,
-    ModelTier, DifficultyLevel,
+    ModelTier, DifficultyLevel, PolicyRoute, TaskDomain,
 )
 from .decomposer import TaskDecomposer, DecomposerTrainingCollector
 from .summarizer import RollingSummarizer
 from .verifier import SelfVerifier
 from .telemetry_collector import TelemetryCollector
 from .classifier_pro import ClassifierProClient, ProClassification
+from .policy_lite import PolicyLiteClient
 
 logger = logging.getLogger("kernell.router.engine")
 
@@ -79,6 +80,7 @@ class IntelligentRouter:
         monthly_budget_usd: Optional[float] = None,
         telemetry: Optional[TelemetryCollector] = None,
         classifier_pro: Optional[ClassifierProClient] = None,
+        policy_lite: Optional[PolicyLiteClient] = None,
         hardware_tier: str = "unknown",
         ram_gb: int = 0,
         has_gpu: bool = False,
@@ -109,6 +111,7 @@ class IntelligentRouter:
         # Data Flywheel & Cloud API
         self._telemetry = telemetry or TelemetryCollector()
         self._classifier_pro = classifier_pro
+        self._policy_lite = policy_lite
         self._hardware_tier = hardware_tier
         self._ram_gb = ram_gb
         self._has_gpu = has_gpu
@@ -138,9 +141,37 @@ class IntelligentRouter:
         logger.info(f"Router: executing task ({len(task)} chars)")
         t0 = time.monotonic()
 
-        # Step 1: Decompose (Local)
-        subtasks = self._decomposer.decompose(task)
-        logger.info(f"Decomposed into {len(subtasks)} subtasks locally")
+        # Step 1: Policy-Lite decision (optional)
+        policy_decision = (
+            self._policy_lite.decide(task)
+            if self._policy_lite else None
+        )
+
+        # Step 1.1: Build execution plan
+        fallback_trigger = ""
+        if policy_decision and not policy_decision.needs_decomposition:
+            tier = self._route_to_tier(policy_decision.route)
+            subtasks = [SubTask(
+                id="s1",
+                description=task,
+                difficulty=DifficultyLevel.MEDIUM,
+                domain=TaskDomain.GENERAL,
+                target_tier=tier,
+                confidence=policy_decision.confidence,
+                escalate_if_fail=True,
+                parallel_ok=False,
+                depends_on=[],
+            )]
+            logger.info(f"Policy-Lite selected direct route={policy_decision.route.value}")
+        else:
+            # Fallback/default path: decompose task using local decomposer
+            subtasks = self._decomposer.decompose(task)
+            logger.info(f"Decomposed into {len(subtasks)} subtasks locally")
+            if policy_decision and policy_decision.route != PolicyRoute.HYBRID:
+                fallback_trigger = "policy_route_override"
+                forced_tier = self._route_to_tier(policy_decision.route)
+                for st in subtasks:
+                    st.target_tier = forced_tier
 
         # Step 1.5: Escalation Check (Classifier-Pro API)
         if self._classifier_pro:
@@ -186,6 +217,9 @@ class IntelligentRouter:
                 hardware_tier=self._hardware_tier,
                 has_gpu=self._has_gpu,
                 ram_gb=self._ram_gb,
+                policy_decision=policy_decision,
+                final_route_used=result.tier_used.value if hasattr(result, "tier_used") else "",
+                fallback_trigger=fallback_trigger,
             )
 
             # Feed result to summarizer
@@ -363,6 +397,16 @@ class IntelligentRouter:
         """Store result in semantic cache if available."""
         if self._cache:
             self._cache.store(prompt, response, model_used=model)
+
+    @staticmethod
+    def _route_to_tier(route: PolicyRoute) -> ModelTier:
+        mapping = {
+            PolicyRoute.LOCAL: ModelTier.LOCAL_SMALL,
+            PolicyRoute.CHEAP: ModelTier.CHEAP_API,
+            PolicyRoute.PREMIUM: ModelTier.PREMIUM_API,
+            PolicyRoute.HYBRID: ModelTier.LOCAL_MEDIUM,
+        }
+        return mapping.get(route, ModelTier.LOCAL_MEDIUM)
 
     def _budget_check(self, estimated_cost: float) -> bool:
         """Check if we have budget remaining."""

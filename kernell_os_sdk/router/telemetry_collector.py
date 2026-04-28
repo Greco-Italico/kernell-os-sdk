@@ -193,7 +193,10 @@ class TelemetryCollector:
                            predicted_difficulty: int, predicted_tier: str,
                            confidence: float, result: Any,
                            hardware_tier: str = "", has_gpu: bool = False,
-                           ram_gb: int = 0) -> None:
+                           ram_gb: int = 0,
+                           policy_decision: Optional[Any] = None,
+                           final_route_used: str = "",
+                           fallback_trigger: str = "") -> None:
         """
         Convenience method to record from an ExecutionResult.
         
@@ -228,6 +231,20 @@ class TelemetryCollector:
             has_gpu=has_gpu,
             ram_bucket=self._bucket_ram(ram_gb),
             local_model_used=result.model_used if hasattr(result, 'model_used') else "",
+            policy_route_predicted=(
+                getattr(getattr(policy_decision, "route", None), "value", "")
+                if policy_decision else ""
+            ),
+            policy_confidence=float(getattr(policy_decision, "confidence", 0.0)) if policy_decision else 0.0,
+            policy_expected_cost=float(getattr(policy_decision, "expected_cost_usd", 0.0)) if policy_decision else 0.0,
+            policy_expected_latency=float(getattr(policy_decision, "expected_latency_s", 0.0)) if policy_decision else 0.0,
+            policy_risk=(
+                getattr(getattr(policy_decision, "risk", None), "value", "")
+                if policy_decision else ""
+            ),
+            policy_version=str(getattr(policy_decision, "policy_version", "")) if policy_decision else "",
+            final_route_used=final_route_used,
+            fallback_trigger=fallback_trigger,
         )
         self.record(event)
 

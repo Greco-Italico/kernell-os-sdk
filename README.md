@@ -1,162 +1,214 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/Greco-Italico/kernell-os-sdk/main/logo3d.png" alt="Kernell OS Logo" width="200" height="200">
-  
-  # Kernell OS
-  ### Machines coordinate, verify, and settle value autonomously.
+  <img src="https://raw.githubusercontent.com/Greco-Italico/kernell-os-sdk/main/logo3d.png" alt="Kernell OS Logo" width="180" height="180">
 
-  <br>
-  
-  ![Kernell OS Demo](https://raw.githubusercontent.com/Greco-Italico/kernell-os-sdk/main/docs/assets/demo_60s.gif)
-
-  <br>
-
-  ![Tests](https://img.shields.io/badge/tests-135%20passing-brightgreen)
-  ![Coverage](https://img.shields.io/badge/router%20coverage-37%20tests-blue)
-  ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
-  ![License](https://img.shields.io/badge/license-Apache%202.0-green)
+  # Kernell OS SDK
+  ### Policy-driven execution infrastructure for agent systems
 </div>
 
-Kernell OS is an agentic runtime where multiple AI systems collaborate, reuse accumulated knowledge, and transact value securely.
+Kernell OS SDK is not a simple LLM wrapper.  
+It is an execution control plane that optimizes inference cost, quality, and latency while collecting feedback to improve routing decisions over time.
 
-This is not another framework for LLM wrappers. This is **infrastructure for autonomous machine-to-machine economies**.
+## What This SDK Is
 
----
+- Policy-driven inference engine
+- Multi-tier execution router (local, cheap API, premium API)
+- Quality-aware runtime with verification and safe fallback
+- Telemetry + labeling + training pipeline for continuous improvement
+- Agent runtime foundation (security, sandboxing, economics, marketplace, governance)
 
-## The Landscape
+## What This SDK Is Not
 
-| System | Generates Code | Remembers Architecture | Coordinates Agents | Settles M2M Value | Optimizes Costs |
-| :--- | :---: | :---: | :---: | :---: | :---: |
-| **Copilots** | ✅ | ❌ | ❌ | ❌ | ❌ |
-| **Agent Frameworks** | ✅ | ⚠️ | ⚠️ | ❌ | ❌ |
-| **Kernell OS** | ✅ | ✅ | ✅ | ✅ | ✅ |
-
----
-
-## How It Works
-
-Kernell OS fundamentally shifts how LLMs interact with code, infrastructure, and economics:
-
-1. ⚡ **3-Layer Token Economy Engine**: Routes every task through the cheapest capable layer — Local (free) → Cheap API ($0.14/M) → Premium API (last resort). Achieves **85-95% cost reduction** compared to sending everything to premium models.
-2. 🧠 **Semantic Memory Graph**: Doesn't cache strings. It learns and traverses architectural paths, reusing proven dependencies and pruning toxic routes via the **Dual Confidence Model**.
-3. 🛡️ **Intent Firewall**: Untrusted AI execution is halted. Every action (syscalls, file writes, outbound requests) is sandbox-verified before touching the host system.
-4. 💰 **Escrow Engine**: Agents are financially bound. Kernell holds execution value in cryptographic escrow, releasing funds ($KERN) only upon verified, monotonic success.
-5. 📊 **Production Observability**: Prometheus-ready metrics, cost-per-task tracking, misclassification detection, and pre-execution cost simulation — all exposed via dashboard and API.
+- Prompt utility library
+- Single-model client wrapper
+- Static rule router without learning loop
 
 ---
 
-## Token Economy Engine (NEW)
+## Core Value Proposition
 
-The **Intelligent Router** is the economic brain of Kernell OS. It eliminates unnecessary API spend by routing tasks through a 3-layer pipeline:
+Traditional flow:
 
-```
-INPUT → Decompose → Cache Check → Local Exec → Verify → [Cheap API] → [Premium API]
-                                                  ↑                         ↑
-                                           AutoMix Gate              Last resort only
-```
+`input -> one LLM`
 
-### Architecture
+Kernell OS flow:
 
-| Layer | Models | Cost/1M tokens | When Used |
-|---|---|---|---|
-| **Local** (Ollama) | Qwen3-1.7B, Gemma3-4B, Mistral-7B, DeepSeek-R1-14B | **$0.00** | Default for 70%+ of tasks |
-| **Cheap API** | DeepSeek V3, Groq, Gemini Flash | **$0.14 - $0.55** | Medium-complexity tasks |
-| **Premium API** | Claude Opus, GPT-5, Gemini Pro | **$15 - $75** | Expert-level only |
+`input -> policy decision -> multi-layer execution -> verification -> telemetry -> retraining`
 
-### Anti-Waste Components
+### Why this matters
 
-- **SemanticCache**: Skip repeated work entirely (40-70% fewer API calls)
-- **RollingSummarizer**: Compress context between steps (kills O(n²) token leak)
-- **SelfVerifier**: Validate output before escalating (prevents premature spend)
-- **CostEstimator**: Show cost *before* execution — full transparency
+- Optimize costs without blindly degrading quality
+- Route dynamically per task/hardware/risk
+- Learn from production behavior (data flywheel)
+- Keep fallback safety under uncertainty
 
-### Deployment Strategy
+---
 
-The router integrates via **safe dual-mode** — no breaking changes:
+## Architecture Overview
 
-```python
-# Phase 0: Shadow Mode (default) — zero risk
-#   Runs both routers, returns legacy, logs differences
-config = RouterConfig(enable_intelligent_router=True, shadow_mode=True)
-
-# Phase 1: Canary — 10% traffic to new router
-config = RouterConfig(canary_percent=0.10)
-
-# Phase 2: Full rollout with automatic fallback
-config = RouterConfig(enable_intelligent_router=True)
+```text
+Task Input
+  -> Policy Model (Lite/Pro)
+  -> (Optional) Task Decomposition
+  -> Execution Layers:
+       [Semantic Cache] -> [Local] -> [Cheap API] -> [Premium]
+  -> Self Verification
+  -> Re-route / Fallback (if needed)
+  -> Telemetry
+  -> Offline Labeling
+  -> Dataset / Fine-tuning Pipeline
 ```
 
-### Dashboard
+## Routing Strategy
 
-The **Command Center** now includes a Token Economy panel:
-- 💰 Real-time cost vs. savings metrics
-- 🤖 Local model inventory (auto-detected from hardware)
-- ⚡ Inference provider key management
-- 📊 Prometheus `/metrics` endpoint for Grafana
-- 🎯 Classifier health + fine-tuning readiness score
+The router is policy-driven, not difficulty-only:
 
----
+- `route`: `local | cheap | premium | hybrid`
+- `confidence`
+- `risk`
+- `expected_cost_usd`
+- `expected_latency_s`
+- `needs_decomposition`
 
-## Security
-
-Production-grade security hardened with **98 automated tests**:
-
-- 🔒 **Sandbox Isolation**: Docker/gVisor with AST-validated code execution
-- 🛡️ **SSRF Protection**: Centralized safe HTTP client, CIDR block enforcement
-- ⚡ **Rate Limiting**: Sliding window with circuit breakers (Netflix Hystrix pattern)
-- 🔐 **Cryptographic Passports**: Ed25519 + AES-256-GCM agent identity
-- 📜 **Audit Trail**: Immutable operation log with redacted PII
+When confidence/risk/economic uncertainty is unsafe, it forces `hybrid` fallback path.
 
 ---
 
-## Quickstart
+## Main Components (Real Modules)
+
+### Router and Policy
+
+- `kernell_os_sdk/router/intelligent_router.py`  
+  Orchestrates execution across cache/local/cheap/premium, verification, telemetry.
+- `kernell_os_sdk/router/policy_lite.py`  
+  Local policy model client with safety overrides.
+- `kernell_os_sdk/router/classifier_pro.py`  
+  Cloud escalation client for higher-precision routing.
+- `kernell_os_sdk/router/types.py`  
+  Canonical contracts (`PolicyDecision`, tiers, results).
+- `kernell_os_sdk/router/entrypoint.py`  
+  Shadow/canary/full rollout entrypoint with safe fallback.
+
+### Quality, Cost, and Context
+
+- `kernell_os_sdk/router/verifier.py` (`SelfVerifier`)
+- `kernell_os_sdk/router/estimator.py` (`CostEstimator`)
+- `kernell_os_sdk/router/summarizer.py` (`RollingSummarizer`)
+- `kernell_os_sdk/router/decomposer.py` (`TaskDecomposer`)
+- `kernell_os_sdk/router/model_registry.py` (`ModelRegistry`)
+
+### Telemetry and Learning Loop
+
+- `kernell_os_sdk/router/telemetry_collector.py`  
+  Collects anonymized route/outcome/quality signals.
+- `kernell_os_sdk/router/offline_labeler.py`  
+  Produces optimal-route labels from real outcomes (cost + quality aware).
+
+### Data Pipeline Scripts
+
+- `scripts/policy_build_dataset.py` -> telemetry to labeled dataset
+- `scripts/policy_make_sft_jsonl.py` -> labeled dataset to SFT JSONL
+- `scripts/policy_train_lora.py` -> LoRA training scaffold
+- `scripts/policy_audit_dataset.py` -> distribution and sampling audit
+
+### Runtime, Security, and Infra Domains
+
+- `kernell_os_sdk/runtime/`  
+  Firecracker/Docker/Subprocess/hybrid runtime primitives
+- `kernell_os_sdk/security/`  
+  policy, verifier, SSRF and capability controls
+- `kernell_os_sdk/cognitive/`  
+  memory graph, execution graph, semantic modules
+- `kernell_os_sdk/marketplace/`, `governance/`, `cluster/`, `delegation/`, `escrow/`  
+  economic coordination and distributed agent primitives
+
+---
+
+## Data Flywheel
+
+Kernell OS improves routing through a closed learning loop:
+
+1. Runtime emits telemetry from real executions
+2. Offline labeler computes optimal route targets
+3. Dataset is generated and audited
+4. Model fine-tuning is prepared/executed
+5. Updated policy models are deployed
+
+This converts routing mistakes into training signal (`underestimation`, `overestimation`, `misroute`) and enables continuous optimization.
+
+---
+
+## Safety and Production Hardening
+
+- Verification-aware routing to reduce low-quality escalations
+- Risk-aware and budget-aware fallback to `hybrid`
+- Optional Prometheus dependency (non-blocking no-op fallback in runtime metrics)
+- Shadow/canary rollout strategy before full traffic cutover
+- Rate limiting, sandbox controls, and capability policy modules available in SDK
+
+---
+
+## Installation
 
 ```bash
-# 1. Install the runtime
 pip install kernell-os
+```
 
-# 2. Scaffold a new environment
-kernell init
+Optional observability dependency:
 
-# 3. Boot the execution engine, Memory Graph, and Gateway
-kernell start
-
-# 4. Run the 60-second interactive demo
-kernell demo
+```bash
+pip install prometheus_client
 ```
 
 ---
 
-## SDK Architecture (19,000+ LOC)
+## Minimal Example
 
+```python
+from kernell_os_sdk.router import PolicyLiteClient, PolicyLiteConfig
+
+# Integrate PolicyLiteClient into your IntelligentRouter wiring
+# based on your local model backend and runtime configuration.
 ```
-kernell_os_sdk/
-├── router/          ⚡ 3-Layer Token Economy Engine (2,436 LOC)
-├── cognitive/       🧠 Memory, Execution Graph, Intent Firewall
-├── security/        🔒 Sandbox, SSRF, Rate Limiter, Policy Engine
-├── escrow/          💰 Cryptographic Escrow Manager
-├── llm/             🤖 Multi-provider LLM abstraction
-├── cluster/         🌐 P2P Discovery + Compute Pool
-├── governance/      🏛️ Agent DAOs + Federation
-├── marketplace/     🏪 Matching Engine
-├── delegation/      👥 Sub-agent Spawning
-├── runtime/         📦 Docker/Firecracker/Subprocess isolation
-└── dashboard.py     📊 FastAPI Command Center
+
+See `kernell_os_sdk/router/` modules and tests for concrete integration patterns.
+
+---
+
+## Testing
+
+Router and flywheel suites:
+
+```bash
+python -m pytest tests/test_router.py tests/test_data_flywheel.py tests/test_policy_lite.py -q
 ```
 
 ---
 
-## Business Model (Open-Core)
+## Current Status
 
-| Layer | License | Description |
-|---|---|---|
-| **SDK Core** | ✅ Open Source | Router, interfaces, integrations, base classifier |
-| **Classifier Pro** | 🔒 API | Fine-tuned model with real-world optimization data |
-| **Cloud Platform** | 🔒 SaaS | Managed router, dashboard, auto-learning pipeline |
+### Implemented now
+
+- Policy-driven router integration
+- Telemetry v2 with policy signals
+- Offline labeling pipeline with quality-aware guards
+- Dataset audit tooling and sampling workflow
+- Regression-tested router/flywheel suites
+
+### Planned / in progress
+
+- Persistent semantic cache backend integration (distributed)
+- Full training automation and model promotion gates
+- Expanded online feedback correction and deploy gating benchmarks
+
+---
+
+## Open-Core Positioning
+
+- SDK core: open source runtime and routing foundations
+- Advanced policy intelligence and cloud services: source-available/commercial layers
 
 ---
 
 <div align="center">
-  <br>
-  <i>This is not a copilot.</i><br>
-  <b>This is infrastructure for autonomous systems.</b>
+  <i>From static LLM calls to adaptive inference infrastructure.</i>
 </div>
