@@ -1,66 +1,125 @@
-"""Aggregate benchmark JSONL runs into business-facing metrics."""
-
-from __future__ import annotations
-
-import argparse
+"""
+Kernell OS SDK — Benchmark Report Generator
+════════════════════════════════════════════
+Reads the latest benchmark run and prints a summary.
+Optionally updates the leaderboard.
+"""
 import json
+import statistics
+import subprocess
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
-from statistics import mean
 
 
-def _read_rows(path: Path) -> list[dict]:
-    rows: list[dict] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
-            rows.append(json.loads(line))
-    return rows
+def summarize(rows):
+    if not rows:
+        return {
+            "savings_pct": 0,
+            "latency_delta_pct": 0,
+            "quality_drop_avg": 0,
+            "quality_guardrail_ok": False,
+            "success_rate": 0,
+        }
 
+    savings = [r["savings_pct"] for r in rows]
+    latency = [r["latency_delta_pct"] for r in rows]
+    qdrop = [r["quality_drop"] for r in rows]
+    successes = [r.get("success", False) for r in rows]
 
-def _avg(rows: list[dict], key: str) -> float:
-    return mean(float(r.get(key, 0.0)) for r in rows) if rows else 0.0
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Aggregate Kernell benchmark JSONL")
-    parser.add_argument("--run-file", required=True, help="Path to benchmark JSONL run")
-    parser.add_argument("--quality-drop-threshold", type=float, default=0.05)
-    args = parser.parse_args()
-
-    rows = _read_rows(Path(args.run_file))
-    baseline = [r for r in rows if r.get("mode") == "baseline"]
-    kernell = [r for r in rows if r.get("mode") == "kernell"]
-
-    baseline_cost = sum(float(r["cost_usd"]) for r in baseline)
-    kernell_cost = sum(float(r["cost_usd"]) for r in kernell)
-    baseline_latency = _avg(baseline, "latency_s")
-    kernell_latency = _avg(kernell, "latency_s")
-    baseline_quality = _avg(baseline, "quality_score")
-    kernell_quality = _avg(kernell, "quality_score")
-    savings_pct = ((baseline_cost - kernell_cost) / baseline_cost * 100.0) if baseline_cost > 0 else 0.0
-    latency_delta_pct = ((kernell_latency - baseline_latency) / baseline_latency * 100.0) if baseline_latency > 0 else 0.0
-    quality_drop = baseline_quality - kernell_quality
-
-    report = {
-        "baseline_cost": round(baseline_cost, 6),
-        "kernell_cost": round(kernell_cost, 6),
-        "savings_pct": round(savings_pct, 2),
-        "latency_baseline": round(baseline_latency, 4),
-        "latency_kernell": round(kernell_latency, 4),
-        "latency_delta_pct": round(latency_delta_pct, 2),
-        "quality_pass_rate_baseline": round(sum(1 for r in baseline if r.get("success")) / max(len(baseline), 1), 4),
-        "quality_pass_rate_kernell": round(sum(1 for r in kernell if r.get("success")) / max(len(kernell), 1), 4),
-        "quality_score_baseline": round(baseline_quality, 4),
-        "quality_score_kernell": round(kernell_quality, 4),
-        "quality_drop": round(quality_drop, 4),
-        "quality_guardrail_ok": quality_drop <= args.quality_drop_threshold,
-        "value_generated_usd_per_1k_tasks": round((baseline_cost - kernell_cost) * 1000.0 / max(len(baseline), 1), 2),
-        "run_file": args.run_file,
+    return {
+        "savings_pct": statistics.mean(savings) * 100,
+        "latency_delta_pct": statistics.mean(latency) * 100,
+        "quality_drop_avg": statistics.mean(qdrop),
+        "quality_guardrail_ok": statistics.mean(qdrop) < 0.05,
+        "success_rate": sum(successes) / len(successes) * 100,
     }
 
-    print(json.dumps(report, sort_keys=True))
-    return 0
+
+def print_report(r, rows):
+    print("\n═══════════════════════════════")
+    print("   Kernell Benchmark Report")
+    print("═══════════════════════════════\n")
+
+    print(f"  Tasks evaluated:    {len(rows)}")
+    print(f"  Success rate:       {r['success_rate']:.0f}%")
+    print()
+    print(f"  💰 Cost reduction:  {r['savings_pct']:.1f}%")
+    print(f"  ⚡ Latency delta:   {r['latency_delta_pct']:.1f}%")
+    print(f"  📉 Quality drop:    {r['quality_drop_avg']:.3f}")
+    print()
+
+    verdict = "PASS ✅" if r["quality_guardrail_ok"] else "FAIL ❌"
+    print(f"  Result: {verdict}")
+
+    # Per-task breakdown
+    print("\n  ── Per-task breakdown ──\n")
+    for row in rows:
+        icon = "✅" if row.get("success") else "❌"
+        print(
+            f"  {icon} {row['task_id']:4s} │ "
+            f"route={row['route']:14s} │ "
+            f"savings={row['savings_pct']*100:5.1f}% │ "
+            f"qdrop={row['quality_drop']:.3f}"
+        )
+
+    print("\n═══════════════════════════════\n")
+
+
+def update_leaderboard(report, num_tasks):
+    path = Path("benchmarks/leaderboard.json")
+
+    if path.exists():
+        data = json.loads(path.read_text())
+    else:
+        data = []
+
+    try:
+        commit = subprocess.check_output(
+            ["git", "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL,
+        ).decode().strip()
+    except Exception:
+        commit = "unknown"
+
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "commit": commit,
+        "tasks": num_tasks,
+        "savings_pct": round(report["savings_pct"], 2),
+        "latency_delta_pct": round(report["latency_delta_pct"], 2),
+        "quality_drop": round(report["quality_drop_avg"], 4),
+        "quality_ok": report["quality_guardrail_ok"],
+        "success_rate": round(report["success_rate"], 1),
+    }
+
+    data.append(entry)
+    data = data[-50:]  # Keep last 50
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2))
+    print(f"  📋 Leaderboard updated ({len(data)} entries)")
+
+    # Generate badge
+    badge = {
+        "label": "cost reduction",
+        "value": f"{report['savings_pct']:.1f}%",
+        "color": "green" if report["savings_pct"] > 50 else "yellow",
+    }
+    Path("benchmarks/badge.json").write_text(json.dumps(badge, indent=2))
+    print(f"  🏷️  Badge generated: {badge['value']}")
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    runs = sorted(Path("benchmarks/runs").glob("*.jsonl"))
+    if not runs:
+        print("No benchmark runs found.")
+        sys.exit(1)
+
+    latest = runs[-1]
+    print(f"  📁 Reading: {latest.name}")
+    rows = [json.loads(line) for line in open(latest) if line.strip()]
+
+    report = summarize(rows)
+    print_report(report, rows)
+    update_leaderboard(report, len(rows))

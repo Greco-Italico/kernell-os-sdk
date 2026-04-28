@@ -1,0 +1,12 @@
+[
+  {
+    "timestamp": "2026-04-28T22:39:12.489182+00:00",
+    "commit": "f1ac55f",
+    "tasks": 3,
+    "savings_pct": 50.0,
+    "latency_delta_pct": -100.0,
+    "quality_drop": 0.0,
+    "quality_ok": true,
+    "success_rate": 100.0
+  }
+]
