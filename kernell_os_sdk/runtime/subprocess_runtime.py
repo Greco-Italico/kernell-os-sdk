@@ -72,8 +72,9 @@ class SubprocessRuntime(BaseRuntime):
                 # En un entorno real, crearíamos un usuario 'kernell-jail'
                 os.setgid(65534)
                 os.setuid(65534)
-            except OSError:
-                pass
+            except OSError as e:
+                import logging
+                logging.warning(f'Suppressed error in {__name__}: {e}')
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         if _is_production_env():

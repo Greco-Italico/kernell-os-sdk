@@ -1,4 +1,4 @@
-import random
+import secrets
 import asyncio
 import logging
 
@@ -98,7 +98,7 @@ class IntelligentRouter:
     # ------------------------
     async def _canary_mode(self, code: str):
         percent = self.config.get("FIRECRACKER_CANARY_PERCENT", 0.01)
-        if random.random() < percent:
+        if secrets.SystemRandom().random() < percent:
             try:
                 result = await self.fc.execute(code)
                 self.metrics.inc("firecracker_success")

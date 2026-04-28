@@ -103,8 +103,9 @@ def _get_machine_secret() -> str:
     secret_dir.mkdir(parents=True, exist_ok=True)
     try:
         os.chmod(str(secret_dir), stat_mod.S_IRWXU)  # 0700
-    except OSError:
-        pass
+    except OSError as e:
+        import logging
+        logging.warning(f'Suppressed error in {__name__}: {e}')
 
     write_secret_bytes(secret_path, new_secret.encode())
 
@@ -148,8 +149,9 @@ def _verify_secret_file_permissions(path: Path) -> None:
         try:
             os.chmod(str(path), stat_mod.S_IRUSR | stat_mod.S_IWUSR)
             logger.info("machine_secret_permissions_auto_fixed: %s", path)
-        except OSError:
-            pass
+        except OSError as e:
+            import logging
+            logging.warning(f'Suppressed error in {__name__}: {e}')
 
     # Check ownership (must be current UID)
     if hasattr(os, "getuid") and st.st_uid != os.getuid():
@@ -169,10 +171,12 @@ def _verify_secret_file_permissions(path: Path) -> None:
             logger.warning("machine_secret_parent_dir_too_open: path=%s mode=%s", parent, oct(parent_mode))
             try:
                 os.chmod(str(parent), stat_mod.S_IRWXU)  # 0700
-            except OSError:
-                pass
-    except OSError:
-        pass
+            except OSError as e:
+                import logging
+                logging.warning(f'Suppressed error in {__name__}: {e}')
+    except OSError as e:
+        import logging
+        logging.warning(f'Suppressed error in {__name__}: {e}')
 
 def _get_or_create_salt(storage_dir: Path) -> bytes:
     """

@@ -1,5 +1,5 @@
 import asyncio
-import random
+import secrets
 import time
 from typing import List, Optional
 
@@ -82,7 +82,7 @@ class Scheduler:
                 return None
 
             weights = [w.health_score for w in healthy]
-            chosen = random.choices(healthy, weights=weights, k=1)[0]
+            chosen = secrets.SystemRandom().choices(healthy, weights=weights, k=1)[0]
 
             if hasattr(self.metrics, "inc"):
                 self.metrics.inc("scheduler_pick_success")

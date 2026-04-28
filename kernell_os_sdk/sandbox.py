@@ -1,3 +1,4 @@
+import shutil
 """
 Kernell OS SDK — Containerized Execution & Resource Management
 ══════════════════════════════════════════════════════════════

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import random
+import secrets
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol
@@ -112,7 +112,7 @@ class RouterEntrypoint:
 
         # ── Canary Mode: probabilistic routing ───────────────────────
         if self._config.canary_percent > 0:
-            if random.random() < self._config.canary_percent:
+            if secrets.SystemRandom().random() < self._config.canary_percent:
                 return self._use_intelligent_safe(task, messages, **kwargs)
             else:
                 return self._use_legacy(messages or [], **kwargs)

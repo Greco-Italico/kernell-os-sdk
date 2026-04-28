@@ -1,0 +1,13 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install docker client so the HybridRuntime can spawn containers if needed
+RUN apt-get update && apt-get install -y docker.io curl && rm -rf /var/lib/apt/lists/*
+
+COPY . .
+
+RUN pip install --no-cache-dir requests redis ed25519 pydantic
+
+# Run the worker node
+CMD ["python", "-m", "testnet.worker_node"]

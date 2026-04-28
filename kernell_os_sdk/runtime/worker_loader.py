@@ -48,6 +48,7 @@ async def reload_loop(scheduler, path):
                                 
                         scheduler.workers = merged
                     last_mtime = mtime
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.warning(f'Suppressed error in {__name__}: {e}')
         await asyncio.sleep(5)

@@ -30,6 +30,7 @@ from kernell_os_sdk.llm import (
     OpenAIProvider, LLMRouter, ComplexityLevel, LLMMessage
 )
 from kernell_os_sdk.delegation import SubAgentManager, TaskQueue
+from kernell_os_sdk.learning.loop import LearningLoop, TaskTrace
 
 __all__ = [
     "Agent", "Memory", "ClusterNode", "ClusterDiscovery", "BountyBoard", "Bounty", "MemorySync",
@@ -45,5 +46,6 @@ __all__ = [
     "BaseLLMProvider", "OllamaProvider", "AnthropicProvider",
     "OpenAIProvider", "LLMRouter", "ComplexityLevel", "LLMMessage",
     "SubAgentManager", "TaskQueue",
+    "LearningLoop", "TaskTrace",
     "__version__",
 ]

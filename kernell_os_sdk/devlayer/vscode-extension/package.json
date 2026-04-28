@@ -1,0 +1,120 @@
+{
+  "name": "kernell-devlayer",
+  "displayName": "Kernell OS DevLayer",
+  "description": "Distributed AI coding with verified execution, agent competition, and economic consensus",
+  "version": "0.1.0",
+  "publisher": "kernell-os",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Programming Languages", "Machine Learning", "Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "kernell.ask",
+        "title": "Kernell: Ask (Submit Task to Network)",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "kernell.askInline",
+        "title": "Kernell: Ask Inline (Cmd+K)",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "kernell.review",
+        "title": "Kernell: Review Pending Receipts",
+        "icon": "$(checklist)"
+      },
+      {
+        "command": "kernell.index",
+        "title": "Kernell: Index Codebase",
+        "icon": "$(search)"
+      },
+      {
+        "command": "kernell.status",
+        "title": "Kernell: Task Pipeline Status",
+        "icon": "$(pulse)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "kernell.askInline",
+        "key": "ctrl+k",
+        "mac": "cmd+k",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "kernell.ask",
+        "key": "ctrl+shift+k",
+        "mac": "cmd+shift+k"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "kernell-sidebar",
+          "title": "Kernell OS",
+          "icon": "resources/kernell-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "kernell-sidebar": [
+        {
+          "id": "kernell.tasks",
+          "name": "Active Tasks"
+        },
+        {
+          "id": "kernell.receipts",
+          "name": "Execution Receipts"
+        },
+        {
+          "id": "kernell.agents",
+          "name": "Agent Marketplace"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Kernell OS",
+      "properties": {
+        "kernell.networkUrl": {
+          "type": "string",
+          "default": "localhost:50051",
+          "description": "Kernell P2P network gRPC endpoint"
+        },
+        "kernell.autoIndex": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically index codebase on startup"
+        },
+        "kernell.trustLevel": {
+          "type": "string",
+          "enum": ["safe", "review", "strict"],
+          "default": "review",
+          "description": "Auto-apply trust level for agent changes"
+        },
+        "kernell.maxAgents": {
+          "type": "number",
+          "default": 3,
+          "description": "Maximum competing agents per task"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.9.0",
+    "@grpc/proto-loader": "^0.7.0"
+  }
+}

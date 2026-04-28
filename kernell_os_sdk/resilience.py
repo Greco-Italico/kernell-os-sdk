@@ -138,8 +138,9 @@ class CircuitBreaker:
                 if self.on_open:
                     try:
                         self.on_open(f"Circuit '{self.name}' opened: {reason}")
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.warning(f'Suppressed error in {__name__}: {e}')
 
     def reset(self):
         """Manually reset the circuit breaker to CLOSED."""

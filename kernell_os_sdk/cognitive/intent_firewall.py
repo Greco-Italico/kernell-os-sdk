@@ -134,8 +134,9 @@ class PayloadCanonicalizer:
                 decoded = base64.b64decode(text).decode('utf-8')
                 if all(ord(c) < 128 for c in decoded):
                     text = decoded
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.warning(f'Suppressed error in {__name__}: {e}')
         # 3. Unicode normalization
         import unicodedata
         text = unicodedata.normalize('NFKC', text)

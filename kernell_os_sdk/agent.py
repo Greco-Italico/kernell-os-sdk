@@ -28,6 +28,8 @@ from .policy_engine import PolicyEngine, AgentCapabilities
 from .risk_engine import RiskEngine, ExecutionContext, ActionTag, DataSensitivity
 from .execution_gate import ExecutionGate, ApprovalSignature
 from .security.rate_limiter import RateLimitGovernor, RateLimitExceeded
+from .runtime import HybridRuntime, HybridRuntimeConfig, ExecutionMode
+from .runtime.models import ExecutionRequest
 
 logger = structlog.get_logger("kernell.agent")
 
@@ -106,6 +108,7 @@ class Agent:
         capabilities: Optional[AgentCapabilities] = None,
         config: Optional[KernellConfig] = None,
         engine: Optional['BaseLLMProvider'] = None,  # Support for custom LLM engines
+        runtime_config: Optional[HybridRuntimeConfig] = None,
     ):
         self.name = name
         self.description = description
@@ -113,6 +116,9 @@ class Agent:
         self.rate = rate_kern_per_task
         self.config = config or default_config
         self.engine = engine
+        
+        self.runtime_config = runtime_config or self._default_runtime_config()
+        self.runtime = HybridRuntime(self.runtime_config)
 
         # Identity & Passport
         self.storage_path = Path(storage_dir).expanduser() / name.lower().replace(" ", "_")
@@ -181,26 +187,35 @@ class Agent:
         logger.info("agent_initialized", agent_name=self.name, agent_id=self.id, kap_address=self.passport.kap_address)
         logger.info("wallet_status", volatile_address=self.passport.kern_volatile_address, solana_address=self.passport.kern_solana_address or "pending")
 
-    def _docker_exec_in_sandbox(self, argv: List[str], command_echo: str) -> str:
-        """Run ``argv`` inside the agent container (no shell). ``command_echo`` is for audit/taint only."""
-        container = self.sandbox.container_name
-        if not re.fullmatch(r"[a-zA-Z0-9_-]+", container):
-            return "Error: nombre de contenedor inválido (invariante de seguridad)."
-        args = ["docker", "exec", container, "--"] + list(argv)
-        res = subprocess.run(
-            args,
-            shell=False,
-            capture_output=True,
-            text=True,
-            timeout=self.capabilities.max_cpu_seconds,
+    def _default_runtime_config(self) -> HybridRuntimeConfig:
+        return HybridRuntimeConfig(
+            target_mode=ExecutionMode.CONSTRAINED,
+            fallback_on_failure=True,
+            min_required_mode=ExecutionMode.DEBUG
         )
-        stdout = res.stdout[: self.capabilities.max_output_bytes]
+
+    def _execute_in_runtime(self, command: str, command_echo: str) -> dict:
+        """Executes a command using the HybridRuntime, enforcing observability and taint propagation."""
+        req = ExecutionRequest(
+            code=command,
+            timeout=self.capabilities.max_cpu_seconds,
+            memory_limit_mb=self.limits.memory_mb
+        )
+        
+        try:
+            result = self.runtime.execute(req)
+        except Exception as e:
+            return {"error": str(e), "mode_used": "unknown", "fallback_triggered": False}
+
+        stdout = result.stdout[: self.capabilities.max_output_bytes]
 
         sensitivity = DataSensitivity.PUBLIC
         if "cat " in command_echo or "grep " in command_echo or "ls " in command_echo or "tree " in command_echo:
             sensitivity = DataSensitivity.INTERNAL
             self.execution_context.holds_sensitive_data = True
 
+        ctx = getattr(result, "_execution_context", {})
+        
         self.execution_context.record_action(
             ActionTag(
                 command=command_echo,
@@ -209,9 +224,13 @@ class Agent:
                 sensitivity=sensitivity,
             )
         )
-        if res.returncode == 0:
-            return stdout
-        return f"Error (exit {res.returncode}): {res.stderr[:2000]}"
+        
+        return {
+            "output": stdout if result.exit_code == 0 else f"Error (exit {result.exit_code}): {result.stderr[:2000]}",
+            "mode_used": ctx.get("mode", "unknown"),
+            "fallback_triggered": ctx.get("fallback_triggered", False),
+            "execution_time": ctx.get("duration_seconds", 0.0)
+        }
 
     def _is_command_safe(self, command: str) -> bool:
         """
@@ -271,12 +290,12 @@ class Agent:
                 except ValueError as e:
                     return f"Error: comando mal formado: {e}"
                 if not argv:
-                    return "Error: comando vacío tras parseo."
-                return self._docker_exec_in_sandbox(argv, command)
+                    return {"error": "comando vacío tras parseo."}
+                return self._execute_in_runtime(command, command)
             except subprocess.TimeoutExpired:
-                return f"Error: Comando expiró después de {self.capabilities.max_cpu_seconds} segundos."
+                return {"error": f"Comando expiró después de {self.capabilities.max_cpu_seconds} segundos."}
             except Exception as e:
-                return f"Error inesperado: {str(e)[:500]}"
+                return {"error": f"Error inesperado: {str(e)[:500]}"}
 
         @self.skill(
             "execute_bash_argv",
@@ -311,11 +330,11 @@ class Agent:
                 return f"Error: [EXECUTION_GATE] CRITICAL action denied. Missing Multi-Sig or Oracle approval."
 
             try:
-                return self._docker_exec_in_sandbox(argv, command)
+                return self._execute_in_runtime(command, command)
             except subprocess.TimeoutExpired:
-                return f"Error: Comando expiró después de {self.capabilities.max_cpu_seconds} segundos."
+                return {"error": f"Comando expiró después de {self.capabilities.max_cpu_seconds} segundos."}
             except Exception as e:
-                return f"Error inesperado: {str(e)[:500]}"
+                return {"error": f"Error inesperado: {str(e)[:500]}"}
 
         @self.skill("mouse_click", "Click a specific coordinate on the screen.")
         def mouse_click(x: int, y: int) -> str:
@@ -401,7 +420,8 @@ class Agent:
                     }
                 })
         except Exception as e:
-            pass
+            import logging
+            logging.warning(f'Suppressed error in {__name__}: {e}')
         return earned
 
     def pay_peer(self, target: str, amount: float, task: str):
@@ -426,7 +446,8 @@ class Agent:
                     }
                 })
         except Exception as e:
-            pass
+            import logging
+            logging.warning(f'Suppressed error in {__name__}: {e}')
         return True
 
     def receive_a2a_message(self, message: A2AMessage) -> bool:
@@ -495,8 +516,9 @@ class Agent:
                 entry = registry.lookup(sender_id)
                 if entry:
                     return entry.get("public_key_hex")
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.warning(f'Suppressed error in {__name__}: {e}')
         return None
 
     def enable_delegation(self, max_workers: int, worker_engine: 'BaseLLMProvider', timeout: float = 60.0):
@@ -636,8 +658,9 @@ class Agent:
                         "status": result.get("status")
                     }
                 }, timeout=2)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.warning(f'Suppressed error in {__name__}: {e}')
                 
         return result
 

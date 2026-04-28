@@ -335,8 +335,9 @@ def validate_code(source: str, filename: str = "<sandbox>") -> ValidationResult:
     visitor = _ForbiddenNodeVisitor(result)
     try:
         visitor.visit(tree)
-    except _TooManyNodes:
-        pass  # la violación ya fue registrada
+    except _TooManyNodes as e:
+        import logging
+        logging.warning(f'Suppressed error in {__name__}: {e}')  # la violación ya fue registrada
 
     result.node_count = visitor.node_count
     return result

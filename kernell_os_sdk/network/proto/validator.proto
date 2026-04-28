@@ -1,0 +1,26 @@
+syntax = "proto3";
+package validator;
+
+option go_package = "./pb";
+
+service ProtocolValidator {
+  rpc ValidateMessage (ValidationRequest) returns (ValidationResponse);
+}
+
+message ValidationRequest {
+  string msg_id = 1;
+  int64 epoch = 2;
+  string type = 3;
+  string payload = 4;
+  string signature = 5;
+  string sender_peer_id = 6;
+}
+
+message ValidationResponse {
+  bool valid = 1;
+  string reason = 2;
+  // impacto económico / reputacional
+  int32 reputation_delta = 3;
+  // si es crítico → ban inmediato sugerido
+  bool ban_peer = 4;
+}

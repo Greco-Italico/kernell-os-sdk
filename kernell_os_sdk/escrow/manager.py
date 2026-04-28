@@ -297,8 +297,9 @@ class EscrowManager:
         except Exception:
             try:
                 self._conn.execute("ROLLBACK")
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.warning(f'Suppressed error in {__name__}: {e}')
             raise
         return True
 
@@ -336,8 +337,9 @@ class EscrowManager:
         except Exception:
             try:
                 self._conn.execute("ROLLBACK")
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.warning(f'Suppressed error in {__name__}: {e}')
             raise
         return True
 
@@ -375,8 +377,9 @@ class EscrowManager:
         except Exception:
             try:
                 self._conn.execute("ROLLBACK")
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.warning(f'Suppressed error in {__name__}: {e}')
             raise
         return True
 
@@ -414,8 +417,9 @@ class EscrowManager:
         except Exception:
             try:
                 self._conn.execute("ROLLBACK")
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.warning(f'Suppressed error in {__name__}: {e}')
             raise
         return True
 
@@ -453,8 +457,9 @@ class EscrowManager:
         except Exception:
             try:
                 self._conn.execute("ROLLBACK")
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.warning(f'Suppressed error in {__name__}: {e}')
             raise
         return True
 
@@ -500,7 +505,8 @@ class EscrowManager:
         except Exception:
             try:
                 self._conn.execute("ROLLBACK")
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.warning(f'Suppressed error in {__name__}: {e}')
             raise
         return True

@@ -76,8 +76,9 @@ class AuditLedger:
                     if len(parts) >= 2:
                         self.last_hash = parts[1]
                         self.chain_length = len(lines)
-        except Exception:
-            pass  # Start fresh if file is corrupted
+        except Exception as e:
+            import logging
+            logging.warning(f'Suppressed error in {__name__}: {e}')  # Start fresh if file is corrupted
 
     def append(self, tenant_id: str, request_id: str, action: str,
                code: str = "", details: Optional[dict] = None):

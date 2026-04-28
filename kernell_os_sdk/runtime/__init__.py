@@ -4,6 +4,7 @@ from .errors import RuntimeErrorBase, SandboxViolation, ExecutionTimeout
 from .subprocess_runtime import SubprocessRuntime
 from .docker_runtime import DockerRuntime
 from .firecracker_runtime import FirecrackerRuntime
+from .hybrid_runtime import HybridRuntime, ExecutionMode, HybridRuntimeConfig
 
 __all__ = [
     "BaseRuntime",
@@ -14,5 +15,8 @@ __all__ = [
     "ExecutionTimeout",
     "SubprocessRuntime",
     "DockerRuntime",
-    "FirecrackerRuntime"
+    "FirecrackerRuntime",
+    "HybridRuntime",
+    "ExecutionMode",
+    "HybridRuntimeConfig"
 ]

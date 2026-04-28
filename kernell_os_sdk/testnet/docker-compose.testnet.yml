@@ -1,0 +1,108 @@
+version: "3.8"
+
+services:
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - testnet
+
+  control_plane:
+    build: 
+      context: ..
+      dockerfile: testnet/Dockerfile.control
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - TESTNET_MODE=true
+    ports:
+      - "8000:8000"
+      - "9100:9100" # Prometheus metrics
+    depends_on:
+      - redis
+    networks:
+      - testnet
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    networks:
+      - testnet
+
+  grafana:
+    image: grafana/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - testnet
+
+  worker_honest:
+    build: 
+      context: ..
+      dockerfile: testnet/Dockerfile.worker
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - NODE_STRATEGY=honest
+      - CONTROL_PLANE_URL=http://control_plane:8000
+      - METRICS_PORT=9101
+    ports:
+      - "9101:9101"
+    depends_on:
+      - control_plane
+    networks:
+      - testnet
+
+  worker_lazy:
+    build: 
+      context: ..
+      dockerfile: testnet/Dockerfile.worker
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - NODE_STRATEGY=lazy
+      - CONTROL_PLANE_URL=http://control_plane:8000
+      - METRICS_PORT=9102
+    ports:
+      - "9102:9102"
+    depends_on:
+      - control_plane
+    networks:
+      - testnet
+
+  worker_adaptive:
+    build: 
+      context: ..
+      dockerfile: testnet/Dockerfile.worker
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - NODE_STRATEGY=adaptive
+      - CONTROL_PLANE_URL=http://control_plane:8000
+      - METRICS_PORT=9103
+    ports:
+      - "9103:9103"
+    depends_on:
+      - control_plane
+    networks:
+      - testnet
+
+  chaos_engine:
+    build:
+      context: ..
+      dockerfile: testnet/Dockerfile.worker
+    environment:
+      - CONTROL_PLANE_URL=http://control_plane:8000
+      - CHAOS_MODE=full_suite
+      - CHAOS_NODES=50
+      - CHAOS_TASKS=500
+      - CHAOS_EPOCHS=5
+    depends_on:
+      - control_plane
+    networks:
+      - testnet
+    command: ["python", "-m", "testnet.chaos.runner"]
+
+networks:
+  testnet:
+    driver: bridge

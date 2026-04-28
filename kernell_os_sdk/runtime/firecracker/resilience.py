@@ -1,6 +1,6 @@
 import time
 import threading
-import random
+import secrets
 from enum import Enum
 from typing import Callable, TypeVar, Optional
 
@@ -85,7 +85,7 @@ def retry_with_jitter(
                 break
             # Exponential backoff with jitter
             delay = min(base_delay * (2 ** attempt), max_delay)
-            jitter = delay * jitter_factor * random.random()
+            jitter = delay * jitter_factor * secrets.SystemRandom().random()
             time.sleep(delay + jitter)
 
     raise last_exception

@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 import uuid
 import os
@@ -30,11 +31,19 @@ class FirecrackerManager:
 
     def start_vm(self, memory_mb=128, cpu_count=1, rootfs_read_only: bool = True):
         vm_id = str(uuid.uuid4())
-        socket_path = f"/tmp/firecracker-{vm_id}.sock"
+        import tempfile
+        import os
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/var/run/kernell")
+        try:
+            os.makedirs(runtime_dir, mode=0o700, exist_ok=True)
+        except OSError:
+            runtime_dir = tempfile.gettempdir()
+        socket_path = os.path.join(runtime_dir, f"firecracker-{vm_id}.sock")
 
         # 1. Start firecracker process
-        process = subprocess.Popen(
-            ["firecracker", "--api-sock", socket_path],
+        fc_bin = shutil.which("firecracker")
+        if not fc_bin: raise RuntimeError("firecracker not found in PATH")
+        process = subprocess.Popen([fc_bin, "--api-sock", socket_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True
@@ -124,10 +133,18 @@ class FirecrackerManager:
 
     def restore_snapshot(self, snap_path: str, mem_path: str):
         vm_id = str(uuid.uuid4())
-        socket_path = f"/tmp/firecracker-{vm_id}.sock"
+        import tempfile
+        import os
+        runtime_dir = os.environ.get("XDG_RUNTIME_DIR", "/var/run/kernell")
+        try:
+            os.makedirs(runtime_dir, mode=0o700, exist_ok=True)
+        except OSError:
+            runtime_dir = tempfile.gettempdir()
+        socket_path = os.path.join(runtime_dir, f"firecracker-{vm_id}.sock")
 
-        process = subprocess.Popen(
-            ["firecracker", "--api-sock", socket_path],
+        fc_bin = shutil.which("firecracker")
+        if not fc_bin: raise RuntimeError("firecracker not found in PATH")
+        process = subprocess.Popen([fc_bin, "--api-sock", socket_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True

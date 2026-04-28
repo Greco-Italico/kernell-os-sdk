@@ -1,53 +1,58 @@
-import math
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional
-
-@dataclass
-class AgentReputationMetrics:
-    quality_score: float = 0.0      # Q (0-100): Calidad de reviews
-    uptime_score: float = 0.0       # U (0-100): Uptime histórico
-    sla_compliance: float = 0.0     # S (0-100): Cumplimiento de SLA
-    benchmark_score: float = 0.0    # B (0-100): Puntuación de hardware/IA
-    task_volume: float = 0.0        # T (0-100): Volumen normalizado de trabajos
-    disputes_penalties: float = 0.0 # D (0-100): Disputas y penalizaciones
-
-    category_scores: Dict[str, float] = field(default_factory=dict)
-    
-    @property
-    def global_reputation(self) -> float:
-        """
-        Fórmula híbrida de reputación:
-        R = 0.30Q + 0.20U + 0.20S + 0.15B + 0.10T - 0.05D
-        """
-        r = (
-            0.30 * self.quality_score +
-            0.20 * self.uptime_score +
-            0.20 * self.sla_compliance +
-            0.15 * self.benchmark_score +
-            0.10 * self.task_volume -
-            0.05 * self.disputes_penalties
-        )
-        return max(0.0, min(100.0, r))
+from kernell_os_sdk.reputation.receipt import ExecutionReceipt
 
 class ReputationEngine:
-    """Motor central para calcular y actualizar la reputación de agentes"""
-    
+    """
+    Evaluates node performance and updates their reputation score 
+    based on the cryptographically verified ExecutionReceipt.
+    """
+
     def __init__(self):
-        # En producción, esto interactuaría con un Ledger o base de datos inmutable
-        self._metrics_store: Dict[str, AgentReputationMetrics] = {}
+        # In a real distributed system, this interacts with a DB/Smart Contract
+        self._scores = {}
 
-    def get_reputation(self, agent_uuid: str) -> float:
-        metrics = self._metrics_store.get(agent_uuid)
-        if not metrics:
+    def get_score(self, agent_id: str) -> int:
+        return self._scores.get(agent_id, 100)  # New nodes start at 100
+
+    def update_reputation(self, receipt: ExecutionReceipt) -> int:
+        """
+        Updates reputation based on execution truth.
+        """
+        current_score = self.get_score(receipt.agent_id)
+        
+        # Base penalty for failing a task
+        if not receipt.success:
+            current_score -= 20
+        # Penalize nodes that advertise isolated/constrained but secretly fallback
+        elif receipt.fallback_triggered:
+            current_score -= 5
+        # Reward nodes that execute cleanly
+        else:
+            current_score += 2
+
+        # Clamping logic
+        new_score = max(0, min(100, current_score))
+        self._scores[receipt.agent_id] = new_score
+        
+        return new_score
+
+    def apply_decay(self, decay_factor: float = 0.98):
+        """
+        Applies a temporal decay to all nodes.
+        Prevents "High reputation exploits" where a node builds trust indefinitely
+        and then suddenly attacks or goes lazy.
+        """
+        for agent_id, score in self._scores.items():
+            self._scores[agent_id] = max(0.0, score * decay_factor)
+
+    def compute_slashing_penalty(self, receipt: ExecutionReceipt, stake_amount: float, fraud_detected: bool = False) -> float:
+        """
+        Calculates the amount of KERN to slash from the node's stake.
+        """
+        if fraud_detected:
+            return stake_amount * 0.50  # Heavy 50% slash for fraud
+            
+        if receipt.success:
             return 0.0
-        return metrics.global_reputation
-
-    def update_metrics(self, agent_uuid: str, updates: dict):
-        if agent_uuid not in self._metrics_store:
-            self._metrics_store[agent_uuid] = AgentReputationMetrics()
-        
-        metrics = self._metrics_store[agent_uuid]
-        
-        for k, v in updates.items():
-            if hasattr(metrics, k):
-                setattr(metrics, k, v)
+            
+        # Standard SLA failure penalty: 10% of staked amount
+        return stake_amount * 0.10

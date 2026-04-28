@@ -8,8 +8,9 @@ def close_fds():
     for fd in range(3, max_fd):
         try:
             os.close(fd)
-        except OSError:
-            pass
+        except OSError as e:
+            import logging
+            logging.warning(f'Suppressed error in {__name__}: {e}')
 
 def drop_privileges():
     if getattr(os, 'getuid', lambda: -1)() == 0:

@@ -130,8 +130,9 @@ class SnapshotPool:
                     vm = self._restore_new()
                     with self.lock:
                         self.pool.append(vm)
-                except Exception:
-                    pass
+                except Exception as e:
+                    import logging
+                    logging.warning(f'Suppressed error in {__name__}: {e}')
 
             # Scale Down & TTL cleanup
             now = time.time()

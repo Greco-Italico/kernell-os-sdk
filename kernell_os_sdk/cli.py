@@ -255,6 +255,18 @@ def main():
     parser_uninstall = subparsers.add_parser("uninstall", help="Cleanly remove all Kernell OS artifacts")
     parser_uninstall.add_argument("--confirm", action="store_true", help="Confirm removal")
     parser_uninstall.set_defaults(func=cmd_uninstall)
+
+    # Dev (DevLayer)
+    from kernell_os_sdk.devlayer.cli_dev import cmd_dev
+    parser_dev = subparsers.add_parser("dev", help="DevLayer: distributed coding commands")
+    dev_sub = parser_dev.add_subparsers(dest="dev_command")
+    dev_sub.add_parser("index", help="Index the codebase for context routing")
+    parser_ask = dev_sub.add_parser("ask", help="Submit a coding task to the network")
+    parser_ask.add_argument("description", nargs="?", help="Task description in natural language")
+    dev_sub.add_parser("review", help="Review pending execution receipts")
+    dev_sub.add_parser("status", help="Show task pipeline status")
+    dev_sub.add_parser("history", help="Show task execution history")
+    parser_dev.set_defaults(func=cmd_dev)
     
     args = parser.parse_args()
     if not args.command:

@@ -99,8 +99,9 @@ class SSRFSafeTransport(httpx.HTTPTransport):
                 ipaddress.ip_address(hostname)
                 logger.warning("ssrf_blocked_direct_ip", host=hostname, agent_id=self.agent_id)
                 raise SSRFViolation(f"Direct IP access to {hostname} is blocked.")
-            except ValueError:
-                pass # It's a hostname, proceed to resolution
+            except ValueError as e:
+                import logging
+                logging.warning(f'Suppressed error in {__name__}: {e}') # It's a hostname, proceed to resolution
                 
         # 2. DNS Resolution and IP Validation
         safe_ip = _resolve_and_validate(hostname, self.agent_id)
@@ -149,8 +150,9 @@ class SSRFSafeAsyncTransport(httpx.AsyncHTTPTransport):
                 ipaddress.ip_address(hostname)
                 logger.warning("ssrf_blocked_direct_ip", host=hostname, agent_id=self.agent_id)
                 raise SSRFViolation(f"Direct IP access to {hostname} is blocked.")
-            except ValueError:
-                pass
+            except ValueError as e:
+                import logging
+                logging.warning(f'Suppressed error in {__name__}: {e}')
                 
         safe_ip = _resolve_and_validate(hostname, self.agent_id)
         

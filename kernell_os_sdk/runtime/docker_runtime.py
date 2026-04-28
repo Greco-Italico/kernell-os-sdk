@@ -13,6 +13,7 @@ Mejoras sobre la versión original:
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import tempfile
 import textwrap
@@ -21,6 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 from .sandbox_validator import SandboxViolation, validate_code
+from .models import ExecutionRequest, ExecutionResult
 
 # ---------------------------------------------------------------------------
 # Constantes de límites (Fix #4)
@@ -58,7 +60,8 @@ class DockerRuntime:
 
     Uso:
         runtime = DockerRuntime(timeout=15, memory="128m")
-        result = runtime.run(user_code)
+        req = ExecutionRequest(code=user_code)
+        result = runtime.execute(req)
         print(result.stdout)
     """
 
@@ -82,16 +85,16 @@ class DockerRuntime:
 
     # ------------------------------------------------------------------
 
-    def run(self, source: str) -> "ExecutionResult":
+    def execute(self, request: ExecutionRequest) -> ExecutionResult:
         """
-        Valida y ejecuta `source` dentro del sandbox Docker.
+        Valida y ejecuta `request.code` dentro del sandbox Docker.
 
         Raises:
             SandboxViolation: si el código no pasa la validación AST.
             DockerRuntimeError: si Docker falla al lanzar el contenedor.
         """
         # 1. Validación AST antes de tocar Docker
-        validation = validate_code(source)
+        validation = validate_code(request.code)
         if not validation.valid:
             raise SandboxViolation(validation)
 
@@ -99,7 +102,7 @@ class DockerRuntime:
         with tempfile.NamedTemporaryFile(
             suffix=".py", prefix="kap_", delete=False, mode="w", encoding="utf-8"
         ) as tmp:
-            tmp.write(source)
+            tmp.write(request.code)
             tmp_path = Path(tmp.name)
 
         try:
@@ -109,7 +112,7 @@ class DockerRuntime:
             proc = subprocess.run(
                 cmd,
                 capture_output=True,
-                timeout=self.timeout,
+                timeout=request.timeout or self.timeout,
                 check=False,  # manejamos returncode manualmente
             )
 
@@ -117,7 +120,7 @@ class DockerRuntime:
             stderr = _truncate(proc.stderr, MAX_OUTPUT_BYTES)
 
             return ExecutionResult(
-                returncode=proc.returncode,
+                exit_code=proc.returncode,
                 stdout=stdout.decode("utf-8", errors="replace"),
                 stderr=stderr.decode("utf-8", errors="replace"),
                 timed_out=False,
@@ -126,7 +129,7 @@ class DockerRuntime:
         except subprocess.TimeoutExpired:
             _force_kill_container(container_name)
             return ExecutionResult(
-                returncode=-1,
+                exit_code=-1,
                 stdout="",
                 stderr=f"Timeout: ejecución superó {self.timeout}s",
                 timed_out=True,
@@ -165,32 +168,6 @@ class DockerRuntime:
 
 
 # ---------------------------------------------------------------------------
-# Resultado de ejecución
-# ---------------------------------------------------------------------------
-
-class ExecutionResult:
-    def __init__(
-        self,
-        returncode: int,
-        stdout: str,
-        stderr: str,
-        timed_out: bool,
-    ) -> None:
-        self.returncode = returncode
-        self.stdout = stdout
-        self.stderr = stderr
-        self.timed_out = timed_out
-
-    @property
-    def success(self) -> bool:
-        return self.returncode == 0 and not self.timed_out
-
-    def __repr__(self) -> str:
-        status = "OK" if self.success else ("TIMEOUT" if self.timed_out else f"ERROR({self.returncode})")
-        return f"<ExecutionResult {status} stdout={len(self.stdout)}b>"
-
-
-# ---------------------------------------------------------------------------
 # Excepciones
 # ---------------------------------------------------------------------------
 
@@ -204,8 +181,9 @@ class DockerRuntimeError(RuntimeError):
 
 def _check_docker_available() -> None:
     try:
-        subprocess.run(
-            ["docker", "info"],
+        docker_bin = shutil.which("docker")
+        if not docker_bin: raise RuntimeError("docker not found in PATH")
+        subprocess.run([docker_bin, "info"],
             capture_output=True,
             timeout=5,
             check=True,
@@ -246,8 +224,9 @@ def _truncate(data: bytes, max_bytes: int) -> bytes:
 
 
 def _force_kill_container(name: str) -> None:
-    subprocess.run(
-        ["docker", "kill", name],
+    docker_bin = shutil.which("docker")
+    if not docker_bin: raise RuntimeError("docker not found in PATH")
+    subprocess.run([docker_bin, "kill", name],
         capture_output=True,
         timeout=5,
         check=False,

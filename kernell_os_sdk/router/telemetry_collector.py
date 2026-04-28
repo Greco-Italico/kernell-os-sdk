@@ -389,8 +389,9 @@ class TelemetryCollector:
             path = Path(self._config.buffer_dir)
             for f in path.glob("telemetry_buffer_*.jsonl"):
                 f.unlink(missing_ok=True)
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.warning(f'Suppressed error in {__name__}: {e}')
 
     # ── Helpers ───────────────────────────────────────────────────────
 
