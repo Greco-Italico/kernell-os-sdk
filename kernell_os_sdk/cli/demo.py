@@ -36,7 +36,12 @@ def run_demo():
         )
     )
 
-    router = IntelligentRouter(telemetry=telemetry)
+    class MockBackend:
+        def generate(self, *args, **kwargs): return "mock output"
+        def process(self, *args, **kwargs): return {"route": "cheap", "confidence": 0.9}
+        
+    mock_be = MockBackend()
+    router = IntelligentRouter(classifier=mock_be, local_models={"local": mock_be}, telemetry=telemetry)
     baseline = BaselineModel()
 
     tasks = [
