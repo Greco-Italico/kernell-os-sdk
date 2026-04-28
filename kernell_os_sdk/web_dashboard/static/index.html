@@ -1,78 +1,14 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>Kernell Dashboard</title>
-  <style>
-    body { font-family: monospace; background: #0f172a; color: #e2e8f0; }
-    .card { padding: 10px; margin: 10px; border: 1px solid #334155; }
-    .banner { background: #1e40af; color: white; padding: 15px; margin: 10px; border-radius: 5px; display: none; }
-    .banner button { background: white; color: #1e40af; border: none; padding: 8px 16px; cursor: pointer; border-radius: 3px; font-weight: bold; margin-top: 10px; }
-    .banner ul { margin-top: 10px; padding-left: 20px; }
-  </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kernell OS | Command Center V4</title>
+  <meta name="description" content="Kernell OS Sovereign Architecture — Full-spectrum command center dashboard with real-time telemetry" />
+  <script type="module" crossorigin src="/assets/index-CZIZIARj.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-fSa6dBqg.css">
 </head>
-<body>
-
-<div id="update-banner" class="banner">
-  <h3>🚀 New Kernell OS Version Available: <span id="latest-ver"></span></h3>
-  <div>Current: <span id="curr-ver"></span></div>
-  <ul id="changelog-list"></ul>
-  <button onclick="triggerUpgrade()">Update Now (1-click)</button>
-</div>
-
-<h1>🧠 Kernell Dashboard</h1>
-
-<h2>Live Execution Telemetry</h2>
-<div id="events"></div>
-
-<script>
-async function checkVersion() {
-  try {
-    const res = await fetch('/version/status');
-    const data = await res.json();
-    if (data.has_update) {
-      document.getElementById("update-banner").style.display = "block";
-      document.getElementById("latest-ver").innerText = data.latest;
-      document.getElementById("curr-ver").innerText = data.current;
-      
-      const cl = document.getElementById("changelog-list");
-      cl.innerHTML = "";
-      data.changelog.forEach(c => {
-        const li = document.createElement("li");
-        li.innerText = c;
-        cl.appendChild(li);
-      });
-    }
-  } catch(e) {}
-}
-
-async function triggerUpgrade() {
-  document.getElementById("update-banner").innerHTML = "<h3>⏳ Upgrading Kernell OS in background...</h3><p>Please restart the dashboard in a few seconds.</p>";
-  await fetch("/version/upgrade", { method: "POST" });
-}
-
-async function load() {
-  try {
-    const res = await fetch('/events');
-    const data = await res.json();
-    const container = document.getElementById('events');
-    container.innerHTML = '';
-    data.reverse().forEach(e => {
-      const div = document.createElement('div');
-      div.className = 'card';
-      div.innerHTML = `
-        <b>route:</b> ${e.final_route_used || 'n/a'}<br/>
-        <b>policy:</b> ${e.policy_route_predicted || 'n/a'}<br/>
-        <b>latency:</b> ${e.latency_ms || 'n/a'} ms<br/>
-        <b>cost:</b> $${e.cost_usd || '0'}<br/>
-      `;
-      container.appendChild(div);
-    });
-  } catch(e) {}
-}
-
-checkVersion();
-setInterval(load, 1500);
-load();
-</script>
+<body style="margin:0;padding:0;background:#04080d;">
+  <div id="root"></div>
 </body>
 </html>

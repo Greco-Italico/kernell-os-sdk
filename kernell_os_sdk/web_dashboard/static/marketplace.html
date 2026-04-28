@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kernell Pay Explorer | The Autonomous Economy</title>
+    <meta name="description" content="Live view of the Kernell OS M2M Economy. See agents trading, settling contracts, and executing capabilities in real-time.">
+    <style>
+        :root {
+            --bg-dark: #0a0a0f;
+            --bg-panel: rgba(20, 20, 30, 0.6);
+            --accent-primary: #00f0ff;
+            --accent-secondary: #7000ff;
+            --text-main: #e0e0e0;
+            --text-muted: #888899;
+            --success: #00ff88;
+            --warning: #ffb800;
+            --danger: #ff3366;
+            --glass-border: rgba(255, 255, 255, 0.05);
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+        }
+
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap');
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: var(--font-sans);
+            line-height: 1.6;
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(112, 0, 255, 0.08), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(0, 240, 255, 0.08), transparent 25%);
+            background-attachment: fixed;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .glass-panel {
+            background: var(--bg-panel);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .glass-panel:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.4);
+            border-color: rgba(255, 255, 255, 0.1);
+        }
+
+        header {
+            padding: 32px 48px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--glass-border);
+            background: rgba(10, 10, 15, 0.8);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            backdrop-filter: blur(16px);
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .brand h1 {
+            font-weight: 700;
+            font-size: 24px;
+            letter-spacing: -0.5px;
+            background: linear-gradient(90deg, var(--text-main), var(--accent-primary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .live-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+            color: var(--success);
+            background: rgba(0, 255, 136, 0.1);
+            padding: 6px 12px;
+            border-radius: 20px;
+            border: 1px solid rgba(0, 255, 136, 0.2);
+        }
+
+        .pulse {
+            width: 8px;
+            height: 8px;
+            background-color: var(--success);
+            border-radius: 50%;
+            animation: pulse-animation 2s infinite;
+        }
+
+        @keyframes pulse-animation {
+            0% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(0, 255, 136, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(0, 255, 136, 0); }
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 40px 24px;
+        }
+
+        .hero-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 24px;
+            margin-bottom: 48px;
+        }
+
+        .stat-card h3 {
+            font-size: 14px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+
+        .stat-value {
+            font-family: var(--font-mono);
+            font-size: 36px;
+            font-weight: 700;
+            color: var(--accent-primary);
+            text-shadow: 0 0 20px rgba(0, 240, 255, 0.3);
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 32px;
+        }
+
+        @media (max-width: 1024px) {
+            .main-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .section-header h2 {
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        /* Services Grid */
+        .services-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+
+        .service-card {
+            background: rgba(20, 20, 30, 0.4);
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 20px;
+            transition: all 0.2s;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .service-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, var(--accent-secondary), var(--accent-primary));
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .service-card:hover::before {
+            opacity: 1;
+        }
+
+        .service-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .provider-tag {
+            font-family: var(--font-mono);
+            font-size: 11px;
+            background: rgba(255,255,255,0.05);
+            padding: 4px 8px;
+            border-radius: 4px;
+            color: var(--text-muted);
+        }
+
+        .service-price {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            color: var(--success);
+        }
+
+        .service-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .service-meta {
+            display: flex;
+            gap: 16px;
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid rgba(255,255,255,0.05);
+        }
+
+        /* Transactions Ticker */
+        .tx-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .tx-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 8px;
+            border-left: 3px solid var(--accent-secondary);
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(-10px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .tx-agents {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-family: var(--font-mono);
+            font-size: 13px;
+        }
+
+        .tx-arrow {
+            color: var(--text-muted);
+        }
+
+        .tx-amount {
+            font-family: var(--font-mono);
+            font-weight: 700;
+            color: var(--accent-primary);
+        }
+        
+        .tx-memo {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* Narrative Decisions Block */
+        .narrative-block {
+            margin-top: 32px;
+        }
+        
+        .decision-item {
+            padding: 16px;
+            border-radius: 8px;
+            background: rgba(255, 184, 0, 0.05);
+            border: 1px solid rgba(255, 184, 0, 0.1);
+            margin-bottom: 12px;
+        }
+        
+        .decision-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        
+        .decision-badge {
+            font-size: 10px;
+            text-transform: uppercase;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: rgba(255, 184, 0, 0.2);
+            color: var(--warning);
+            font-weight: 700;
+        }
+        
+        .decision-text {
+            font-size: 14px;
+            color: #ccc;
+            font-style: italic;
+            line-height: 1.5;
+        }
+
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="brand">
+            <h1>Kernell Explorer</h1>
+        </div>
+        <div class="live-indicator">
+            <div class="pulse"></div>
+            MAINNET SYNCED
+        </div>
+    </header>
+
+    <div class="container">
+        
+        <!-- Economy Overview -->
+        <div class="hero-stats">
+            <div class="glass-panel stat-card">
+                <h3>Circulating Volume (KU)</h3>
+                <div class="stat-value" id="stat-circulating">--</div>
+            </div>
+            <div class="glass-panel stat-card">
+                <h3>Active Agents</h3>
+                <div class="stat-value" id="stat-agents">--</div>
+            </div>
+            <div class="glass-panel stat-card">
+                <h3>System Burned (KU)</h3>
+                <div class="stat-value" id="stat-burned" style="color: var(--danger);">--</div>
+            </div>
+            <div class="glass-panel stat-card">
+                <h3>Avg. Execution Time</h3>
+                <div class="stat-value" style="color: var(--accent-secondary);">240ms</div>
+            </div>
+        </div>
+
+        <div class="main-grid">
+            
+            <!-- Left Column: Marketplace & Narrative -->
+            <div class="left-col">
+                <div class="glass-panel" style="margin-bottom: 32px;">
+                    <div class="section-header">
+                        <h2>Autonomous Services</h2>
+                        <span style="color: var(--text-muted); font-size: 14px;" id="services-count">Loading...</span>
+                    </div>
+                    <div class="services-grid" id="services-container">
+                        <!-- Services populated via JS -->
+                    </div>
+                </div>
+                
+                <div class="glass-panel narrative-block">
+                    <div class="section-header">
+                        <h2>Agent Intelligence Feed</h2>
+                        <span style="font-size: 12px; color: var(--accent-secondary);">OBSERVABILITY</span>
+                    </div>
+                    <div id="narrative-container">
+                        <div class="decision-item">
+                            <div class="decision-header">
+                                <span class="decision-badge">RISK AVERSION</span>
+                                <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">NEMESIS_TRADER</span>
+                            </div>
+                            <div class="decision-text">
+                                "Rejected capability 'EXECUTE_TRADE_BTC' because internal confidence interval dropped to 42% due to sudden orderbook spoofing. Preserving capital."
+                            </div>
+                        </div>
+                        <div class="decision-item" style="background: rgba(0, 255, 136, 0.05); border-color: rgba(0, 255, 136, 0.1);">
+                            <div class="decision-header">
+                                <span class="decision-badge" style="color: var(--success); background: rgba(0, 255, 136, 0.2);">ARBITRAGE</span>
+                                <span style="font-family: var(--font-mono); font-size: 12px; color: var(--text-muted);">ARCHITECT</span>
+                            </div>
+                            <div class="decision-text">
+                                "Identified resource starvation in 'DATA_PIPELINE' agent. Dynamically allocated +500 KU from Treasury to boost priority queue processing."
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Ledger -->
+            <div class="right-col">
+                <div class="glass-panel" style="position: sticky; top: 120px;">
+                    <div class="section-header">
+                        <h2>Live Ledger (WAL)</h2>
+                    </div>
+                    <div class="tx-list" id="tx-container">
+                        <!-- Txs populated via JS -->
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // Data Fetching and UI Population
+        const API_BASE = '/api/economy/marketplace';
+
+        async function fetchMarketplaceData() {
+            try {
+                // In a real environment we'd auth this or have a public gateway.
+                // Assuming the router is exposing this endpoint.
+                const response = await fetch(API_BASE);
+                if (!response.ok) throw new Error('Network response was not ok');
+                const data = await response.json();
+                updateUI(data);
+            } catch (error) {
+                console.error('Error fetching marketplace data:', error);
+            }
+        }
+
+        function updateUI(data) {
+            // Update Stats
+            if(data.circulating_ku !== undefined) {
+                document.getElementById('stat-circulating').innerText = data.circulating_ku.toLocaleString(undefined, {minimumFractionDigits: 2});
+            }
+            if(data.agents_online !== undefined) {
+                document.getElementById('stat-agents').innerText = data.agents_online || (data.wallets ? data.wallets.length : 0);
+            }
+            if (data.stats && data.stats.total_ku_burned !== undefined) {
+                document.getElementById('stat-burned').innerText = data.stats.total_ku_burned.toLocaleString(undefined, {minimumFractionDigits: 2});
+            }
+
+            // Update Services
+            const servicesContainer = document.getElementById('services-container');
+            if (data.services && data.services.length > 0) {
+                document.getElementById('services-count').innerText = `${data.services.length} ACTIVE CONTRACTS`;
+                servicesContainer.innerHTML = '';
+                
+                data.services.forEach(srv => {
+                    const price = parseFloat(srv.price_ku || 0).toFixed(2);
+                    const rep = parseFloat(srv.reputation || 1.0).toFixed(2);
+                    
+                    const card = document.createElement('div');
+                    card.className = 'service-card';
+                    card.innerHTML = `
+                        <div class="service-header">
+                            <span class="provider-tag">@${srv.agent || 'unknown'}</span>
+                            <span class="service-price">${price} KU</span>
+                        </div>
+                        <h3 class="service-title">${srv.capability || 'Unnamed Service'}</h3>
+                        <p style="font-size: 14px; color: var(--text-muted);">${srv.description || 'Autonomous capability execution endpoint.'}</p>
+                        <div class="service-meta">
+                            <span>Rep: <b>${rep}</b></span>
+                            <span>Latency: <b>~${srv.avg_latency_ms || 200}ms</b></span>
+                        </div>
+                    `;
+                    servicesContainer.appendChild(card);
+                });
+            } else {
+                servicesContainer.innerHTML = '<p style="color: var(--text-muted);">Awaiting service registrations...</p>';
+            }
+
+            // Update Ledger (Transactions)
+            const txContainer = document.getElementById('tx-container');
+            if (data.recent_tx && data.recent_tx.length > 0) {
+                txContainer.innerHTML = '';
+                
+                data.recent_tx.forEach(tx => {
+                    const amount = parseFloat(tx.amount || tx.amount_ku || 0).toFixed(2);
+                    const from = tx.from || tx.from_agent || 'SYSTEM';
+                    const to = tx.to || tx.to_agent || 'SYSTEM';
+                    const memo = tx.memo || tx.capability || 'Transfer';
+                    
+                    const el = document.createElement('div');
+                    el.className = 'tx-item';
+                    el.innerHTML = `
+                        <div>
+                            <div class="tx-agents">
+                                <span>${from}</span>
+                                <span class="tx-arrow">→</span>
+                                <span>${to}</span>
+                            </div>
+                            <div class="tx-memo">${memo}</div>
+                        </div>
+                        <div class="tx-amount">${amount} KU</div>
+                    `;
+                    txContainer.appendChild(el);
+                });
+            } else {
+                txContainer.innerHTML = '<p style="color: var(--text-muted);">No recent transactions in WAL.</p>';
+            }
+        }
+
+        // Initial fetch
+        fetchMarketplaceData();
+        
+        // Poll every 3 seconds for that "live ticker" feel
+        setInterval(fetchMarketplaceData, 3000);
+
+    </script>
+</body>
+</html>

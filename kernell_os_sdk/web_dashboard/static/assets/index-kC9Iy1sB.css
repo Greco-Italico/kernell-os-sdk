@@ -1,0 +1,1 @@
+.nemesis-matrix-container .pulse-green{color:#26a69a;animation:nemesis-pulse 1.8s ease-in-out infinite}.nemesis-matrix-container .pulse-red{color:#ef5350;animation:nemesis-pulse 1.8s ease-in-out infinite}@keyframes nemesis-pulse{0%,to{opacity:1}50%{opacity:.45}}

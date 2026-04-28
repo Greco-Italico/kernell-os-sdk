@@ -1,311 +1,219 @@
-# 🚀 Kernell OS SDK
-
-## 🧠 What is Kernell OS?
-
-**Kernell OS SDK is an installable agentic runtime that executes, routes, and optimizes AI workloads automatically across multiple models and cost tiers.**
-
-It is not just a library to call LLMs.
-
-It is a system that:
-
-* Decides **how** tasks should be executed
-* Optimizes **cost, latency, and quality** in real time
-* Learns from production via telemetry
-* Improves itself through a continuous data flywheel
+<div align="center">
+  <h1>🧠 Kernell OS</h1>
+  <h3>The First Installable Agentic Environment with Built-in Economy</h3>
+</div>
 
 ---
 
-## 💡 In One Line
-
-> Kernell turns AI inference into an optimized, self-improving system.
-
----
-
-# 🧱 System Architecture (Layered View)
-
-```
-┌──────────────────────────────────────┐
-│           Application Layer          │
-│   (Agents, copilots, workflows)      │
-└──────────────────────────────────────┘
-                  ↓
-┌──────────────────────────────────────┐
-│        Policy & Decision Layer       │
-│   (PolicyLite, risk, cost, routing)  │
-└──────────────────────────────────────┘
-                  ↓
-┌──────────────────────────────────────┐
-│        Execution & Routing Layer     │
-│   (Router, fallback, decomposition)  │
-└──────────────────────────────────────┘
-                  ↓
-┌──────────────────────────────────────┐
-│        Model & Cache Layer           │
-│ (Local / Cheap / Premium + Cache)    │
-└──────────────────────────────────────┘
-                  ↓
-┌──────────────────────────────────────┐
-│        Telemetry & Learning Layer    │
-│ (Telemetry, labeling, datasets, FT)  │
-└──────────────────────────────────────┘
-```
-
----
-
-# 🔥 Core Capabilities
-
-## 🧠 Intelligent Routing (Policy Engine)
-
-Automatically selects the best execution strategy:
-
-* `local` → fastest, cheapest
-* `cheap` → low-cost cloud models
-* `premium` → high-quality models
-* `hybrid` → safe fallback path
-
-Decisions are based on:
-
-* confidence
-* risk
-* expected cost
-* latency constraints
-
----
-
-## 🤖 Execution Engine
-
-* Task decomposition
-* Multi-model orchestration
-* Automatic fallback
-* Parallel execution support
-
----
-
-## 💰 Cost-Aware Optimization
-
-* Expected vs real cost tracking
-* Budget enforcement
-* Savings measurement (`savings_pct`)
-
----
-
-## 📊 Telemetry & Data Flywheel
-
-Every execution generates structured telemetry:
-
-* routing decisions
-* cost and latency
-* success/failure
-* policy signals
-
-Used to:
-
-* debug production issues
-* build training datasets
-* improve policy models
-
----
-
-## 🔁 Continuous Learning Pipeline
-
-Built-in tools:
-
-* dataset generation
-* labeling from real outcomes
-* SFT dataset creation
-* LoRA fine-tuning pipeline
-
----
-
-## ⚡ Semantic Cache (L1 + L2)
-
-* In-memory cache (L1)
-* Vector database (Qdrant) (L2)
-
-Reduces:
-
-* latency
-* cost
-* repeated computation
-
----
-
-## 🌐 Classifier-Pro API
-
-* FastAPI server
-* External policy decisions
-* Rate limiting
-
----
-
-## 🧪 Production-Grade Validation
-
-* Containerized install validation
-* Smoke tests (real execution)
-* Chaos testing (failure scenarios)
-* CI release gates
-* Benchmark system
-
----
-
-# ⚡ Quickstart
-
-## 1. Install
+## ⚡ What You Install
 
 ```bash
 pip install kernell-os-sdk
+kernell init --full
+kernell dashboard
+```
+
+👉 You don’t install a library.
+👉 You install a **complete agentic environment**.
+
+---
+
+# 🖥️ The Dashboard is the OS
+
+Kernell OS is not CLI-first. It is **dashboard-first**.
+
+### 👉 This is where everything happens:
+* You run tasks
+* You monitor execution
+* You build agents (DevLayer)
+* You interact with the system
+* You access the marketplace
+* You manage your AI economy
+
+> **The dashboard is the human interface to your agentic system.**
+
+---
+
+## 🧩 DevLayer — Build Inside the System
+
+Inside the dashboard, you get:
+* agent builder
+* workflow editor
+* execution inspector
+* policy tuning
+* dataset tools
+
+👉 No external tooling required.
+
+---
+
+## 🧠 The Core: Task Classification Engine
+
+Everything in Kernell depends on one thing:
+👉 **Understanding the task correctly**
+
+### 🔹 PolicyLite (Local)
+* small fine-tuned model
+* runs locally
+* ultra fast
+* near-zero cost
+
+### 🔹 Classifier-Pro (Remote)
+* advanced model hosted by Kernell
+* used only when needed
+* higher accuracy
+
+### ⚙️ How it works
+
+```text
+Task → PolicyLite
+        ↓
+   confident → execute locally
+   uncertain → escalate to Classifier-Pro
+```
+
+👉 You only pay when escalation happens.
+
+---
+
+## 💰 Kernell Pay (Economic Layer)
+
+Kernell includes a native economic system.
+
+### 💠 KERN Token
+Used for:
+* premium routing decisions
+* classifier-pro queries
+* marketplace interactions
+* agent execution payments
+
+### 🎁 Airdrops
+On install, users receive:
+* free credits (KERN)
+* enough to explore the system
+* test routing, marketplace, and agents
+
+---
+
+## 🌐 Marketplace (Autonomous Economy)
+
+Agents can:
+* execute tasks
+* offer services
+* interact with other agents
+* generate value
+
+### Examples:
+* summarization agents
+* research agents
+* automation workflows
+* data labeling agents
+
+### 💸 Payments
+* automatic
+* verifiable
+* tied to execution results
+
+---
+
+## 🔐 KAP Protocol (Security Layer)
+
+Kernell runs on a native protocol:
+
+### Guarantees:
+* secure execution boundaries
+* verifiable task outcomes
+* structured telemetry
+* audit-ready interactions
+
+👉 This is what enables trust in the marketplace.
+
+---
+
+## ⚙️ Execution Engine
+
+Kernell automatically:
+* decomposes tasks
+* selects models
+* applies fallback
+* optimizes cost
+* aggregates results
+
+---
+
+## 📊 Telemetry & Learning
+
+Every action generates:
+* routing decisions
+* cost
+* latency
+* success/failure
+* policy signals
+
+Used for:
+* debugging
+* dataset generation
+* policy improvement
+
+---
+
+## 🔁 Self-Improving System
+
+```text
+Execution → Telemetry → Dataset → Training → Better Routing
 ```
 
 ---
 
-## 2. Basic Usage
+## ⚡ What Makes Kernell Different
 
-```python
-from kernell_os_sdk.router import IntelligentRouter
+### 1. It’s Not a Tool — It’s an Environment
+Everything lives inside the system.
 
-router = IntelligentRouter()
-results = router.execute("Explain quantum computing simply")
+### 2. It Has a Native Economy
+Most AI tools:
+❌ no pricing intelligence
+❌ no value exchange
 
-for r in results:
-    print(r.output)
-```
+Kernell:
+✅ built-in payments
+✅ task-based economy
 
----
+### 3. It Optimizes Automatically
+You don’t choose models. Kernell does.
 
-# 💥 Real Example (Value Demonstration)
+### 4. It Learns From Real Usage
+No static configs. Only evolving intelligence.
 
-### Task:
-
-> "Summarize a 10-page document and extract key insights"
-
-### Without Kernell:
-
-* Uses premium model directly
-* Cost: **$0.25**
-* Latency: **3.2s**
-
-### With Kernell:
-
-* Classifies as medium complexity
-* Uses cheap + partial routing
-* Cost: **$0.03**
-* Latency: **1.9s**
-
-### Result:
-
-* 💰 **~88% cost reduction**
-* ⚡ **~40% faster**
-* ✅ Same quality (verified)
+### 5. It Has a Human Interface
+Dashboard ≠ monitoring
+👉 Dashboard = control layer
 
 ---
 
-# 🧠 How It Works (Internal Flow)
+## 🚀 Differentiating Features
 
-```
-Input
-  ↓
-PolicyLite → decides route (local/cheap/premium/hybrid)
-  ↓
-Router → executes plan
-  ↓
-Fallbacks (if needed)
-  ↓
-Result aggregation
-  ↓
-Telemetry capture
-  ↓
-Dataset + training loop
-```
+* agentic environment (not SDK)
+* DevLayer (built-in development)
+* PolicyLite + Classifier-Pro system
+* Kernell Pay (native economy)
+* marketplace for autonomous agents
+* KAP protocol (secure execution)
 
 ---
 
-# 🧪 Validation Modes
+## 💥 Real Value
 
-## 🟢 Normal Mode (Release Gate)
-
-Validates:
-
-* install
-* import
-* CLI
-* router execution
-* telemetry
-* policy
-* failure-mode
+Kernell typically achieves:
+* 💰 50–98% cost reduction
+* ⚡ lower latency
+* 📊 stable quality
 
 ---
 
-## 🟡 Chaos Mode (Resilience)
+## ⚡ Final Truth
 
-```bash
-docker compose --profile chaos up
-```
+Kernell is not a wrapper. It is not a library. It is not a tool.
 
-Validates:
-
-* degraded execution
-* service failures
-* fallback behavior
-* system resilience
-
----
-
-# 📊 Benchmarking
-
-Run benchmark:
-
-```bash
-python scripts/benchmark_runner.py
-```
-
-Generate report:
-
-```bash
-python scripts/benchmark_report.py
-```
-
-Metrics:
-
-* savings_pct
-* latency_delta
-* quality_guardrail
-
----
-
-# 🔁 Data Flywheel
-
-```
-Production → Telemetry → Labeling → Dataset → Training → Better Policy
-```
-
----
-
-# 🧩 Use Cases
-
-* AI copilots
-* autonomous agents
-* cost-optimized inference systems
-* multi-model orchestration
-
----
-
-# 🚀 Roadmap
-
-* Fine-tuned policy model (LoRA)
-* Auto-install model on init
-* Production deployment tooling
-* Advanced chaos testing (latency, partial failures)
-
----
-
-# 🧾 License
-
-MIT
-
----
-
-# ⚡ Final Note
-
-Kernell is not just an SDK.
-
-It is a system for managing intelligence as a resource.
+It is:
+> **An operating environment for intelligent systems — with its own economy.**
