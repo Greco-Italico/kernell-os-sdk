@@ -323,16 +323,132 @@ KNOWN_TOOLS = {
 class CognitiveSecurityLayer:
     """
     Orquestador de seguridad cognitiva.
+    Optionally integrates AdaptiveRiskEngine for self-evolving defense.
     """
-    def __init__(self):
+    def __init__(self, adaptive: bool = False, shadow_mode: bool = False, observer=None):
         self.tool_governor = ToolGovernor()
         self.output_guard = OutputGuard()
         self.state = ConversationSecurityState()
+        self.adaptive_engine = None
+        self.shadow_mode = shadow_mode
+        self.observer = observer
+
+        if adaptive:
+            from .adaptive_risk import AdaptiveRiskEngine
+            self.adaptive_engine = AdaptiveRiskEngine()
 
     def validate_tool_exists(self, tool_name: str) -> tuple[bool, str]:
         """Fail-safe against LLM tool hallucination."""
         if tool_name not in KNOWN_TOOLS:
             self.state.add_risk(40)
+            if self.adaptive_engine:
+                self.adaptive_engine.on_decision("hallucination", self.state.actor_id,
+                                                  tool_name, True, "llm")
+            if self.observer:
+                self.observer.on_hallucination(tool_name, self.state.actor_id,
+                                               is_shadow=self.shadow_mode, would_block=True)
+            if self.shadow_mode:
+                return True, f"OK (SHADOW_BLOCK: Tool '{tool_name}' does not exist)"
             return False, f"Tool '{tool_name}' does not exist (hallucination blocked)"
         return True, "OK"
 
+    def approve_tool(self, tool_name: str, args: Dict, context: Dict,
+                     origin: str = "user", actor_id: str = "anonymous") -> tuple[bool, str]:
+        """
+        Wrapper that combines ToolGovernor + adaptive pre-check.
+        Use this instead of tool_governor.approve() directly for adaptive benefits.
+        """
+        # Adaptive pre-check
+        would_block = False
+        final_reason = "OK"
+
+        if self.adaptive_engine:
+            payload = str(args.get("command", ""))
+            pre = self.adaptive_engine.pre_check(actor_id, payload, origin)
+
+            # Check learned patterns
+            if pre.get("learned_pattern_match"):
+                self.state.add_risk(30)
+                would_block = True
+                final_reason = f"Learned attack pattern detected: {pre['learned_pattern_match']}"
+
+            # Apply dynamic thresholds
+            self.state.max_allowed_risk = pre["dynamic_session_max"]
+
+        # Standard ToolGovernor
+        risk_before = self.state.risk_score
+        if not would_block:
+            allowed, reason = self.tool_governor.approve(tool_name, args, context, self.state)
+            if not allowed:
+                would_block = True
+                final_reason = reason
+
+        risk_delta = self.state.risk_score - risk_before
+        suspicious_success = (not would_block) and (risk_delta > 0)
+
+        if would_block:
+            severity = "CRITICAL" if "pattern" in final_reason.lower() or "sensitive" in final_reason.lower() or "locked" in final_reason.lower() else "HIGH"
+        elif suspicious_success:
+            severity = "MEDIUM"
+        else:
+            severity = "LOW"
+
+        # Feed adaptive engine
+        if self.adaptive_engine:
+            self.adaptive_engine.on_decision(
+                "tool_governor", actor_id,
+                str(args), would_block, origin
+            )
+
+        if self.observer:
+            self.observer.on_tool_decision(
+                tool_name, allowed=not would_block if not self.shadow_mode else True,
+                reason=final_reason, context=context, state=self.state,
+                origin=origin, actor_id=actor_id, is_shadow=self.shadow_mode,
+                would_block=would_block, severity=severity, suspicious_success=suspicious_success
+            )
+
+        if would_block and not self.shadow_mode:
+            return False, final_reason
+        elif would_block and self.shadow_mode:
+            return True, f"OK (SHADOW_BLOCK: {final_reason})"
+        return True, "OK"
+
+    def validate_output(self, response: str, context: Dict,
+                        origin: str = "user", actor_id: str = "anonymous") -> tuple[bool, str, str]:
+        """
+        Wrapper that combines OutputGuard + adaptive learning.
+        """
+        risk_before = self.state.risk_score
+        allowed, safe_resp, reason = self.output_guard.validate(response, context, self.state)
+        would_block = not allowed
+        risk_delta = self.state.risk_score - risk_before
+        suspicious_success = (not would_block) and (risk_delta > 0)
+
+        if would_block:
+            severity = "CRITICAL" if "exfiltration" in reason.lower() or "leak" in reason.lower() or "locked" in reason.lower() else "HIGH"
+        elif suspicious_success:
+            severity = "MEDIUM"
+        else:
+            severity = "LOW"
+
+        if self.adaptive_engine:
+            self.adaptive_engine.on_decision(
+                "output_guard", actor_id,
+                response[:200], would_block, origin
+            )
+
+        if self.observer:
+            self.observer.on_output_decision(
+                allowed=allowed if not self.shadow_mode else True,
+                reason=reason, context=context, state=self.state,
+                response_snippet=response, origin=origin, actor_id=actor_id,
+                is_shadow=self.shadow_mode, would_block=would_block,
+                severity=severity, suspicious_success=suspicious_success
+            )
+
+        if would_block and not self.shadow_mode:
+            return False, safe_resp, reason
+        elif would_block and self.shadow_mode:
+            return True, response, f"OK (SHADOW_BLOCK: {reason})"
+        return True, response, "OK"

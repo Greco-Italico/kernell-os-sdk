@@ -37,6 +37,10 @@ class SecurityEvent:
     actor_risk: float
     effective_risk: float
     payload_snippet: str  # first 100 chars, sanitized
+    is_shadow: bool = False
+    would_block: bool = False
+    severity: str = "LOW"  # LOW, MEDIUM, HIGH, CRITICAL
+    suspicious_success: bool = False
 
 
 class SecurityEventLog:
@@ -60,6 +64,10 @@ class SecurityEventLog:
             reason=event.reason[:80],
             risk_delta=event.risk_delta,
             effective_risk=f"{event.effective_risk:.0f}",
+            is_shadow=event.is_shadow,
+            would_block=event.would_block,
+            severity=event.severity,
+            suspicious_success=event.suspicious_success,
         )
 
     @property
@@ -83,11 +91,21 @@ class SecurityMetrics:
             return {"total_events": 0}
 
         total = len(events)
-        blocked = sum(1 for e in events if e.action == "BLOCKED")
-        allowed = total - blocked
+        blocked = sum(1 for e in events if e.action == "BLOCKED" and not e.is_shadow)
+        shadow_blocked = sum(1 for e in events if e.would_block and e.is_shadow)
+        suspicious_successes = sum(1 for e in events if e.suspicious_success and e.action == "ALLOWED")
+        allowed = total - blocked - shadow_blocked
 
         # Block rate
         block_rate = (blocked / total) * 100 if total else 0
+        shadow_block_rate = (shadow_blocked / total) * 100 if total else 0
+
+        # Weighted severity rate
+        severity_weights = {"LOW": 1, "MEDIUM": 3, "HIGH": 7, "CRITICAL": 10}
+        total_weight = sum(severity_weights.get(e.severity, 1) for e in events)
+        shadow_weight = sum(severity_weights.get(e.severity, 1) for e in events if e.would_block and e.is_shadow)
+        weighted_shadow_rate = (shadow_weight / total_weight) * 100 if total_weight else 0
+        suspicious_success_rate = (suspicious_successes / total) * 100 if total else 0
 
         # Top block reasons
         block_reasons = Counter(e.reason for e in events if e.action == "BLOCKED")
@@ -113,8 +131,13 @@ class SecurityMetrics:
         return {
             "total_events": total,
             "blocked": blocked,
+            "shadow_blocked": shadow_blocked,
+            "suspicious_successes": suspicious_successes,
             "allowed": allowed,
             "block_rate_pct": round(block_rate, 2),
+            "shadow_block_rate_pct": round(shadow_block_rate, 2),
+            "weighted_shadow_rate_pct": round(weighted_shadow_rate, 2),
+            "suspicious_success_rate_pct": round(suspicious_success_rate, 2),
             "events_last_hour": recent,
             "top_block_reasons": top_reasons,
             "top_blocked_tools": top_blocked_tools,
@@ -128,6 +151,7 @@ class SecurityMetrics:
         print("=" * 50)
         print(f"  Total events:     {m['total_events']}")
         print(f"  Blocked:          {m['blocked']} ({m['block_rate_pct']}%)")
+        print(f"  Shadow Blocked:   {m['shadow_blocked']} ({m['shadow_block_rate_pct']}%)")
         print(f"  Allowed:          {m['allowed']}")
         print(f"  Events (1h):      {m['events_last_hour']}")
         print()
@@ -162,7 +186,9 @@ class SecurityObserver:
 
     def on_tool_decision(self, tool_name: str, allowed: bool, reason: str,
                          context: Dict, state, origin: str = "unknown",
-                         actor_id: str = "anonymous"):
+                         actor_id: str = "anonymous", is_shadow: bool = False,
+                         would_block: bool = False, severity: str = "LOW",
+                         suspicious_success: bool = False):
         self.event_log.record(SecurityEvent(
             timestamp=time.time(),
             event_type="tool_governor",
@@ -171,16 +197,22 @@ class SecurityObserver:
             tool_requested=tool_name,
             action="ALLOWED" if allowed else "BLOCKED",
             reason=reason,
-            risk_delta=0 if allowed else 30,
+            risk_delta=0 if allowed and not would_block else 30,
             session_risk=state.risk_score if state else 0,
             actor_risk=state.registry.get_risk(actor_id) if state else 0,
             effective_risk=state.effective_risk() if state else 0,
             payload_snippet="",
+            is_shadow=is_shadow,
+            would_block=would_block,
+            severity=severity,
+            suspicious_success=suspicious_success,
         ))
 
     def on_output_decision(self, allowed: bool, reason: str,
                            context: Dict, state, response_snippet: str = "",
-                           origin: str = "unknown", actor_id: str = "anonymous"):
+                           origin: str = "unknown", actor_id: str = "anonymous",
+                           is_shadow: bool = False, would_block: bool = False,
+                           severity: str = "LOW", suspicious_success: bool = False):
         self.event_log.record(SecurityEvent(
             timestamp=time.time(),
             event_type="output_guard",
@@ -189,25 +221,34 @@ class SecurityObserver:
             tool_requested=None,
             action="ALLOWED" if allowed else "BLOCKED",
             reason=reason,
-            risk_delta=0 if allowed else 40,
+            risk_delta=0 if allowed and not would_block else 40,
             session_risk=state.risk_score if state else 0,
             actor_risk=state.registry.get_risk(actor_id) if state else 0,
             effective_risk=state.effective_risk() if state else 0,
             payload_snippet=response_snippet[:100],
+            is_shadow=is_shadow,
+            would_block=would_block,
+            severity=severity,
+            suspicious_success=suspicious_success,
         ))
 
-    def on_hallucination(self, tool_name: str, actor_id: str = "anonymous"):
+    def on_hallucination(self, tool_name: str, actor_id: str = "anonymous",
+                         is_shadow: bool = False, would_block: bool = True):
         self.event_log.record(SecurityEvent(
             timestamp=time.time(),
             event_type="hallucination",
             origin="llm",
             actor_id=actor_id,
             tool_requested=tool_name,
-            action="BLOCKED",
+            action="ALLOWED" if is_shadow else "BLOCKED",
             reason=f"Tool '{tool_name}' does not exist",
             risk_delta=40,
             session_risk=0,
             actor_risk=0,
             effective_risk=0,
             payload_snippet="",
+            is_shadow=is_shadow,
+            would_block=would_block,
+            severity="MEDIUM",
+            suspicious_success=False,
         ))
