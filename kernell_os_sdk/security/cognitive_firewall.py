@@ -81,6 +81,8 @@ class ConversationSecurityState:
       - Actor risk: persists across sessions via ActorRiskRegistry (slow-burn detection)
     """
     def __init__(self, actor_id: str = "anonymous", registry: 'ActorRiskRegistry' = None):
+        import uuid
+        self.session_id = str(uuid.uuid4())
         self.risk_score = 0
         self.max_allowed_risk = 100
         self.actor_id = actor_id
@@ -342,8 +344,8 @@ class CognitiveSecurityLayer:
         if tool_name not in KNOWN_TOOLS:
             self.state.add_risk(40)
             if self.adaptive_engine:
-                self.adaptive_engine.on_decision("hallucination", self.state.actor_id,
-                                                  tool_name, True, "llm")
+                self.adaptive_engine.on_decision(self.state.session_id, "hallucination", self.state.actor_id,
+                                                  tool_name, True, "llm", severity="MEDIUM")
             if self.observer:
                 self.observer.on_hallucination(tool_name, self.state.actor_id,
                                                is_shadow=self.shadow_mode, would_block=True)
@@ -364,7 +366,7 @@ class CognitiveSecurityLayer:
 
         if self.adaptive_engine:
             payload = str(args.get("command", ""))
-            pre = self.adaptive_engine.pre_check(actor_id, payload, origin)
+            pre = self.adaptive_engine.pre_check(self.state.session_id, actor_id, payload, origin)
 
             # Check learned patterns
             if pre.get("learned_pattern_match"):
@@ -396,7 +398,7 @@ class CognitiveSecurityLayer:
         # Feed adaptive engine
         if self.adaptive_engine:
             self.adaptive_engine.on_decision(
-                "tool_governor", actor_id,
+                self.state.session_id, "tool_governor", actor_id,
                 str(args), would_block, origin, severity=severity
             )
 
@@ -434,7 +436,7 @@ class CognitiveSecurityLayer:
 
         if self.adaptive_engine:
             self.adaptive_engine.on_decision(
-                "output_guard", actor_id,
+                self.state.session_id, "output_guard", actor_id,
                 response[:200], would_block, origin, severity=severity
             )
 

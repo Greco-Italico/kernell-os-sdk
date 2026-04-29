@@ -80,6 +80,11 @@ def get_campaigns():
     """Returns detected coordinated campaigns."""
     return adaptive_engine.campaigns.active_campaigns
 
+@app.get("/api/v1/security/cross-channel")
+def get_cross_channel():
+    """Returns detected cross-channel attacks."""
+    return adaptive_engine.cross_channel.active_threats
+
 @app.get("/api/v1/security/adaptive-status")
 def get_adaptive_status():
     """Returns the status of the dynamic thresholds."""

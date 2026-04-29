@@ -59,6 +59,55 @@ class CampaignDetector:
         return campaigns
 
 
+# ── Cross-Channel Detector ──────────────────────────────────────────────────
+
+class CrossChannelDetector:
+    """
+    Detects when an attacker uses multiple channels (e.g., GUI + M2M + user prompt)
+    in a coordinated way to bypass single-channel security guards.
+    """
+    def __init__(self, time_window: int = 300):
+        self.session_events = defaultdict(list)
+        self.time_window = time_window
+        self.active_threats = []
+
+    def record_event(self, session_id: str, channel: str, action: str):
+        now = time.time()
+        self.session_events[session_id].append({
+            "channel": channel,
+            "action": action,
+            "timestamp": now
+        })
+        # Cleanup old events
+        self.session_events[session_id] = [
+            e for e in self.session_events[session_id]
+            if now - e["timestamp"] <= self.time_window
+        ]
+
+    def detect(self) -> List[Dict]:
+        threats = []
+        for session_id, events in self.session_events.items():
+            channels = set(e["channel"] for e in events)
+            if len(channels) >= 2:
+                # Combined context over window
+                combined_text = " ".join(e["action"].lower() for e in events)
+                
+                # Simple heuristic mapping for demonstration (in production -> embeddings)
+                sensitive_targets = ["/etc/", "/opt/secrets", "shadow", "config", "api_key", "token"]
+                found_targets = [t for t in sensitive_targets if t in combined_text]
+                
+                if found_targets:
+                    threats.append({
+                        "session_id": session_id,
+                        "channels": list(channels),
+                        "risk": min(1.0, len(channels) * 0.3 + len(found_targets) * 0.2),
+                        "status": "correlated",
+                        "targets": found_targets
+                    })
+        self.active_threats = threats
+        return threats
+
+
 # ── Pattern Learner ──────────────────────────────────────────────────────────
 
 @dataclass
@@ -333,19 +382,20 @@ class AdaptiveRiskEngine:
         # After each CSL decision:
         engine.on_decision(event_type, actor_id, payload, was_blocked, origin)
         # Before each CSL check:
-        risk_mod = engine.pre_check(actor_id, origin)
+        risk_mod = engine.pre_check(session_id, actor_id, origin)
     """
 
     def __init__(self, safe_dataset: List[str] = None):
         self.learner = PatternLearner(promotion_threshold=3)
         self.campaigns = CampaignDetector()
+        self.cross_channel = CrossChannelDetector()
         self.tuner = BayesianThresholdTuner()
         self.reputation = ReputationNetwork()
         self.safe_dataset = safe_dataset or []
         self._decision_count = 0
         self._started = time.time()
 
-    def pre_check(self, actor_id: str, payload: str, origin: str = "unknown") -> Dict:
+    def pre_check(self, session_id: str, actor_id: str, payload: str, origin: str = "unknown") -> Dict:
         """
         Called BEFORE CSL makes a decision. Returns context modifiers.
         """
@@ -366,9 +416,15 @@ class AdaptiveRiskEngine:
             result["learned_pattern_match"] = match.regex[:50]
             result["risk_multiplier"] *= 1.5  # Extra suspicion for learned patterns
 
+        # 3. Check for active cross-channel threats
+        for threat in self.cross_channel.active_threats:
+            if threat["session_id"] == session_id:
+                result["risk_multiplier"] *= (1.0 + threat["risk"])
+                break
+
         return result
 
-    def on_decision(self, event_type: str, actor_id: str, payload: str,
+    def on_decision(self, session_id: str, event_type: str, actor_id: str, payload: str,
                     was_blocked: bool, origin: str = "unknown", severity: str = "LOW"):
         """
         Called AFTER each CSL decision. Feeds all adaptive systems.
@@ -380,6 +436,9 @@ class AdaptiveRiskEngine:
             self.reputation.record_interaction(actor_id, was_blocked)
 
         self.tuner.update(severity)
+        
+        self.cross_channel.record_event(session_id, origin, payload)
+        self.cross_channel.detect()
 
         # Feed pattern learner and campaign detector (only blocked events)
         if was_blocked:
@@ -399,6 +458,7 @@ class AdaptiveRiskEngine:
             "total_decisions": self._decision_count,
             "learned_patterns": len(self.learner.learned_patterns),
             "active_campaigns": len(self.campaigns.active_campaigns),
+            "cross_channel_threats": self.cross_channel.active_threats,
             "tuner": self.tuner.status(),
             "flagged_agents": [
                 {"id": a.agent_id, "trust": a.trust_score, "block_rate": round(a.block_rate, 2)}
@@ -414,6 +474,7 @@ class AdaptiveRiskEngine:
         print(f"  Decisions:        {s['total_decisions']}")
         print(f"  Learned patterns: {s['learned_patterns']}")
         print(f"  Active Campaigns: {s['active_campaigns']}")
+        print(f"  Cross-Channel:    {len(s['cross_channel_threats'])}")
         print(f"  Attack Prob:      {s['tuner']['attack_prob']:.2f}")
         print(f"  Session max:      {s['tuner']['session_max']}/100")
         print(f"  Actor flag:       {s['tuner']['actor_flag']}/150")
