@@ -116,6 +116,21 @@ class IntelligentRouter:
         self._ram_gb = ram_gb
         self._has_gpu = has_gpu
 
+        # MCTS Reasoning Engine (System 2)
+        if self._policy_lite and self._verifier:
+            try:
+                from .mcts_engine import MCTSEngine
+                self._mcts_engine = MCTSEngine(
+                    policy_lite=self._policy_lite,
+                    decomposer=self._decomposer,
+                    verifier=self._verifier,
+                    num_simulations=3
+                )
+            except ImportError:
+                self._mcts_engine = None
+        else:
+            self._mcts_engine = None
+
         # Budget tracking
         self._budget_usd = monthly_budget_usd
         self._spent_usd = 0.0
@@ -141,11 +156,18 @@ class IntelligentRouter:
         logger.info(f"Router: executing task ({len(task)} chars)")
         t0 = time.monotonic()
 
-        # Step 1: Policy-Lite decision (optional)
-        policy_decision = (
-            self._policy_lite.decide(task)
-            if self._policy_lite else None
-        )
+        # Step 1: Policy-Lite decision (optional, with MCTS)
+        pre_computed_subtasks = None
+        if hasattr(self, '_mcts_engine') and self._mcts_engine:
+            logger.info("Engaging System 2: MCTS Routing Engine")
+            optimal_node = self._mcts_engine.search_optimal_path(task)
+            policy_decision = optimal_node.decision
+            pre_computed_subtasks = optimal_node.subtasks
+        else:
+            policy_decision = (
+                self._policy_lite.decide(task)
+                if self._policy_lite else None
+            )
 
         # Step 1.1: Build execution plan
         fallback_trigger = ""
@@ -165,8 +187,13 @@ class IntelligentRouter:
             logger.info(f"Policy-Lite selected direct route={policy_decision.route.value}")
         else:
             # Fallback/default path: decompose task using local decomposer
-            subtasks = self._decomposer.decompose(task)
-            logger.info(f"Decomposed into {len(subtasks)} subtasks locally")
+            if pre_computed_subtasks:
+                subtasks = pre_computed_subtasks
+                logger.info(f"Using {len(subtasks)} subtasks from MCTS pre-computation")
+            else:
+                subtasks = self._decomposer.decompose(task)
+                logger.info(f"Decomposed into {len(subtasks)} subtasks locally")
+            
             if policy_decision and policy_decision.route != PolicyRoute.HYBRID:
                 fallback_trigger = "policy_route_override"
                 forced_tier = self._route_to_tier(policy_decision.route)
@@ -270,7 +297,7 @@ class IntelligentRouter:
             # Self-verify before accepting
             if self._verifier:
                 check = self._verifier.verify(subtask.description, output)
-                if check.should_accept(0.70):
+                if check.should_accept(self._verifier._threshold):
                     self._stats.local_executions += 1
                     self._cache_result(subtask.description, output, "local")
                     return ExecutionResult(
@@ -312,7 +339,7 @@ class IntelligentRouter:
                 confidence = 0.8
                 if self._verifier:
                     check = self._verifier.verify(subtask.description, output)
-                    accepted = check.should_accept(0.65)
+                    accepted = check.should_accept(self._verifier._threshold)
                     confidence = check.confidence
 
                 if accepted:

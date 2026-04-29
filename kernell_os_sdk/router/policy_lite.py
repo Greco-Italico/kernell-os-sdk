@@ -19,7 +19,8 @@ logger = logging.getLogger("kernell.router.policy_lite")
 POLICY_SYSTEM_PROMPT = """\
 You are a routing policy model for an LLM orchestration engine.
 
-Return ONLY JSON with this schema:
+Before deciding, you MUST think step-by-step in a <thought> block about the task's complexity, cost, and risk.
+After your thought block, return ONLY JSON with this schema:
 {
   "route": "local|cheap|premium|hybrid",
   "confidence": 0.0-1.0,

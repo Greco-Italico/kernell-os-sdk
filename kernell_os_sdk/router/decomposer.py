@@ -44,9 +44,17 @@ Rules:
 - Mark which steps can run in parallel
 - Be aggressive in decomposition: more small steps = cheaper execution
 
-Respond ONLY with a JSON array. No explanations.
+Before outputting the JSON array, you MUST think step-by-step in a <thought> block.
+Trace your logic, evaluate the difficulty of each step, and map out dependencies.
+After your thought block, output ONLY the JSON array.
 
 Example output:
+<thought>
+1. The user wants to build an API with JWT auth.
+2. Step 1: Extract endpoint list. Difficulty 1 (simple extraction), Domain: data.
+3. Step 2: Generate route handlers. Difficulty 2 (summarization/generation), Domain: code.
+4. Step 3: Implement JWT middleware. Difficulty 3 (multi-step logic), Domain: code. Depends on s1 and s2.
+</thought>
 [
   {"id": "s1", "description": "Extract endpoint list from spec", "difficulty": 1, "domain": "data", "parallel_ok": true, "depends_on": []},
   {"id": "s2", "description": "Generate route handler skeleton", "difficulty": 2, "domain": "code", "parallel_ok": true, "depends_on": []},
@@ -112,7 +120,7 @@ class TaskDecomposer:
             system=DECOMPOSER_SYSTEM_PROMPT,
         )
 
-        subtasks = self._parse_output(raw_output)
+        subtasks = self._parse_output(raw_output, task)
         elapsed = (time.monotonic() - t0) * 1000
 
         self._decomposition_count += 1
@@ -122,7 +130,7 @@ class TaskDecomposer:
         )
         return subtasks
 
-    def _parse_output(self, raw: str) -> List[SubTask]:
+    def _parse_output(self, raw: str, original_task: str) -> List[SubTask]:
         """Parse the classifier's JSON output into SubTask objects."""
         # Extract JSON from potentially noisy output
         raw = raw.strip()
@@ -132,13 +140,13 @@ class TaskDecomposer:
         end = raw.rfind("]")
         if start == -1 or end == -1:
             logger.warning("Decomposer output is not valid JSON array, creating single task")
-            return [self._fallback_single_task(raw)]
+            return [self._fallback_single_task(original_task)]
 
         try:
             items = json.loads(raw[start:end + 1])
         except json.JSONDecodeError as e:
             logger.warning(f"JSON parse error: {e}, falling back to single task")
-            return [self._fallback_single_task(raw)]
+            return [self._fallback_single_task(original_task)]
 
         subtasks = []
         for item in items:
@@ -163,13 +171,13 @@ class TaskDecomposer:
                 depends_on=item.get("depends_on", []),
             ))
 
-        return subtasks if subtasks else [self._fallback_single_task("")]
+        return subtasks if subtasks else [self._fallback_single_task(original_task)]
 
-    def _fallback_single_task(self, description: str) -> SubTask:
+    def _fallback_single_task(self, original_task: str) -> SubTask:
         """When decomposition fails, treat the whole thing as one task."""
         return SubTask(
             id="s1",
-            description=description or "Execute full task",
+            description=original_task,
             difficulty=DifficultyLevel.MEDIUM,
             domain=TaskDomain.GENERAL,
             target_tier=ModelTier.LOCAL_MEDIUM,
