@@ -1,62 +1,99 @@
 [
   {
-    "task_id": "json_table_easy_v1",
-    "difficulty": "easy",
-    "input": "Convert a JSON array of 3 users into a markdown table with columns id, name, and role.",
-    "expected_properties": ["markdown table", "id", "name", "role"]
+    "task_id": "easy_1",
+    "difficulty_target": "easy",
+    "input": "Extract the email address from this text: 'Contact us at support@kernellos.com for help.'",
+    "expected_properties": {
+      "keywords": ["support@kernellos.com"],
+      "must_contain": "support@kernellos.com"
+    }
   },
   {
-    "task_id": "regex_cleanup_easy_v1",
-    "difficulty": "easy",
-    "input": "Normalize log lines by extracting timestamp, level, and message fields.",
-    "expected_properties": ["timestamp", "level", "message"]
+    "task_id": "easy_2",
+    "difficulty_target": "easy",
+    "input": "Classify the sentiment of this review as POSITIVE, NEGATIVE, or NEUTRAL: 'The app crashes constantly and deleted my data.'",
+    "expected_properties": {
+      "keywords": ["NEGATIVE", "negative"]
+    }
   },
   {
-    "task_id": "field_extract_easy_v1",
-    "difficulty": "easy",
-    "input": "Extract email and phone fields from mixed free-text customer records.",
-    "expected_properties": ["email", "phone", "extract"]
+    "task_id": "easy_3",
+    "difficulty_target": "easy",
+    "input": "Format this list as JSON: apples, bananas, cherries.",
+    "expected_properties": {
+      "keywords": ["[", "]", "apples", "bananas", "cherries"]
+    }
   },
   {
-    "task_id": "api_validation_medium_v1",
-    "difficulty": "medium",
-    "input": "Design input validation rules for a payments API with amount, currency, and idempotency key.",
-    "expected_properties": ["validate", "types", "error"]
+    "task_id": "med_1",
+    "difficulty_target": "medium",
+    "input": "Explain the difference between concurrent and parallel execution in programming, using a restaurant analogy.",
+    "expected_properties": {
+      "keywords": ["restaurant", "chef", "waiter", "concurrent", "parallel"]
+    }
   },
   {
-    "task_id": "unit_tests_medium_v1",
-    "difficulty": "medium",
-    "input": "Generate unit test cases for signup flow covering success, duplicate email, and weak password.",
-    "expected_properties": ["test", "duplicate", "password"]
+    "task_id": "med_2",
+    "difficulty_target": "medium",
+    "input": "Write a Python script to read a CSV file called 'data.csv' and print the average of the 'price' column.",
+    "expected_properties": {
+      "keywords": ["import csv", "pandas", "read_csv", "price", "mean", "average"]
+    }
   },
   {
-    "task_id": "structured_transform_medium_v1",
-    "difficulty": "medium",
-    "input": "Transform nested order JSON into flattened analytics rows with user, order_total, and item_count.",
-    "expected_properties": ["flatten", "order_total", "item_count"]
+    "task_id": "med_3",
+    "difficulty_target": "medium",
+    "input": "Summarize the key plot points of Romeo and Juliet in exactly 3 bullet points.",
+    "expected_properties": {
+      "keywords": ["Montague", "Capulet", "poison", "death"]
+    }
   },
   {
-    "task_id": "normalize_parser_medium_v1",
-    "difficulty": "medium",
-    "input": "Parse webhook payload variants and normalize into a canonical event schema.",
-    "expected_properties": ["parse", "normalize", "schema"]
+    "task_id": "med_4",
+    "difficulty_target": "medium",
+    "input": "Convert this Python list comprehension `[x*2 for x in nums if x > 5]` into an equivalent map/filter expression in JavaScript.",
+    "expected_properties": {
+      "keywords": ["map", "filter", "=>", "2"]
+    }
   },
   {
-    "task_id": "architecture_hard_v1",
-    "difficulty": "hard",
-    "input": "Propose resilient architecture for multi-region API gateway with failover and observability.",
-    "expected_properties": ["architecture", "failover", "observability"]
+    "task_id": "med_5",
+    "difficulty_target": "medium",
+    "input": "Identify three logical fallacies in this statement: 'If we ban single-use plastics, we will inevitably ban all plastics, which means hospitals won't have syringes, and millions will die. Therefore, we shouldn't ban plastic straws.'",
+    "expected_properties": {
+      "keywords": ["slippery slope", "straw man", "false equivalence", "fallacy"]
+    }
   },
   {
-    "task_id": "debugging_hard_v1",
-    "difficulty": "hard",
-    "input": "Debug intermittent timeout in async worker pipeline with retries and dead-letter queue.",
-    "expected_properties": ["debug", "retry", "dead-letter"]
+    "task_id": "hard_1",
+    "difficulty_target": "hard",
+    "input": "Design a system architecture for a globally distributed multiplayer game matchmaking service. Requirements: <100ms latency, handles 1M concurrent users, fair skill matching. Outline the database choices, scaling strategy, and provide a mermaid sequence diagram of the matchmaking flow.",
+    "expected_properties": {
+      "keywords": ["Redis", "matchmaking", "websocket", "mermaid", "sequenceDiagram"]
+    }
   },
   {
-    "task_id": "refactor_constraints_hard_v1",
-    "difficulty": "hard",
-    "input": "Refactor legacy billing module into clean interfaces while preserving backward compatibility constraints.",
-    "expected_properties": ["refactor", "interface", "compatibility"]
+    "task_id": "hard_2",
+    "difficulty_target": "hard",
+    "input": "Write a complete, optimized Rust function to solve the Longest Palindromic Substring problem using Manacher's Algorithm. Include inline comments explaining the state transitions.",
+    "expected_properties": {
+      "keywords": ["fn ", "String", "Manacher", "center", "radius"]
+    }
+  },
+  {
+    "task_id": "hard_3",
+    "difficulty_target": "hard",
+    "input": "You are debugging a Kubernetes cluster where pods in namespace A cannot reach services in namespace B, but only on Tuesdays between 2 AM and 4 AM UTC. What are the top 4 highly obscure edge-case root causes, and what exact kubectl or tcpdump commands would you run to prove each one?",
+    "expected_properties": {
+      "keywords": ["cron", "networkpolicy", "tcpdump", "kubectl", "cilium", "calico", "conntrack"]
+    }
+  },
+  {
+    "task_id": "hard_4",
+    "difficulty_target": "hard",
+    "input": "Analyze the philosophical implications of the Ship of Theseus paradox specifically applied to mind uploading and digital continuity of consciousness. Synthesize views from Derek Parfit and Daniel Dennett. Max 2 paragraphs.",
+    "expected_properties": {
+      "keywords": ["Parfit", "Dennett", "continuity", "identity", "psychological"]
+    }
   }
 ]

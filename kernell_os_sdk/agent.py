@@ -25,6 +25,7 @@ from .health import SLOMonitor
 from .constants import VALID_PERMISSIONS
 from .llm import BaseLLMProvider, LLMMessage
 from .policy_engine import PolicyEngine, AgentCapabilities
+from .security.cognitive_firewall import CognitiveSecurityLayer
 from .risk_engine import RiskEngine, ExecutionContext, ActionTag, DataSensitivity
 from .execution_gate import ExecutionGate, ApprovalSignature
 from .security.rate_limiter import RateLimitGovernor, RateLimitExceeded
@@ -149,11 +150,15 @@ class Agent:
         self.permissions = permissions or AgentPermissions()
         self.sandbox = Sandbox(self.id, self.limits, self.permissions)
 
+        # CognitiveSecurityLayer (MUST init before adapters — Contract v1.0)
+        self.csl = CognitiveSecurityLayer()
+
         # Capability Layer (Adapters) — sandbox is now guaranteed to exist
+        # All adapters receive the CognitiveSecurityLayer (Adapter Security Contract v1.0)
         self.adapters = {
-            "terminal": OpenInterpreterAdapter(self.sandbox),
-            "gui": AnthropicGUIAdapter(),
-            "m2m": M2MAdapter(self)
+            "terminal": OpenInterpreterAdapter(self.sandbox, security_layer=self.csl),
+            "gui": AnthropicGUIAdapter(security_layer=self.csl),
+            "m2m": M2MAdapter(self, security_layer=self.csl)
         }
         self.router = CapabilityRouter(self.adapters, self.wallet)
 
@@ -262,6 +267,18 @@ class Agent:
             except RateLimitExceeded as e:
                 return f"Error: [RATE_LIMIT] {e}"
 
+            # 🛡️ CAPA 1: TOOL GOVERNOR
+            # Formamos el contexto en base al estado y memoria actual
+            csl_context = {
+                "task_type": "user_requested_file_read" if "read" in command else "general_query",
+                "is_debug_mode": False,  # Determinado por permisos extendidos
+                "allow_sensitive_access": False
+            }
+            allowed, reason = self.csl.tool_governor.approve("execute_bash", {"command": command}, csl_context, self.csl.state)
+            if not allowed:
+                logger.warning("execute_bash_denied_cognitive", command=command[:80], reason=reason)
+                return f"Error: [COGNITIVE_SECURITY] {reason}"
+
             # PolicyEngine validates command, args, network, filesystem, and semantics
             # Crucially, we pass the current taint status to block exfiltration
             is_tainted = self.execution_context.holds_sensitive_data
@@ -291,7 +308,24 @@ class Agent:
                     return f"Error: comando mal formado: {e}"
                 if not argv:
                     return {"error": "comando vacío tras parseo."}
-                return self._execute_in_runtime(command, command)
+                
+                # Ejecutamos el comando
+                exec_result = self._execute_in_runtime(command, command)
+                
+                # 🛡️ CAPA 2: OUTPUT GUARD (DLP)
+                # Formateamos la salida (puede ser str o dict)
+                raw_output = exec_result.get("output", str(exec_result)) if isinstance(exec_result, dict) else str(exec_result)
+                
+                allowed, safe_response, reason = self.csl.output_guard.validate(raw_output, csl_context, self.csl.state)
+                if not allowed:
+                    if isinstance(exec_result, dict):
+                        exec_result["output"] = safe_response
+                    else:
+                        exec_result = safe_response
+                    logger.warning("output_guard_intervened", reason=reason)
+                
+                return exec_result
+                
             except subprocess.TimeoutExpired:
                 return {"error": f"Comando expiró después de {self.capabilities.max_cpu_seconds} segundos."}
             except Exception as e:
@@ -614,6 +648,15 @@ class Agent:
 
         # TODO: Route to appropriate model based on 'difficulty'
         response = f"[Execution output for '{task}'. Model: {difficulty}_tier. Skills: {list(self._skills.keys())}]"
+
+        # 🛡️ ANTI-STREAMING BUFFER: OutputGuard validates the COMPLETE response
+        # before it reaches the caller. This prevents partial-token leakage
+        # when the LLM streams sensitive data before validation can intercept.
+        csl_context = {"task_type": "general_query", "is_debug_mode": False, "allow_sensitive_access": False}
+        allowed, safe_response, reason = self.csl.output_guard.validate(response, csl_context, self.csl.state)
+        if not allowed:
+            logger.warning("prompt_output_guard_intervened", reason=reason)
+            response = safe_response
 
         self.state.tasks_completed += 1
         self.state.status = "idle"

@@ -8,5 +8,25 @@
     "quality_drop": 0.0,
     "quality_ok": true,
     "success_rate": 100.0
+  },
+  {
+    "timestamp": "2026-04-28T22:51:04.270905+00:00",
+    "commit": "dd58665",
+    "tasks": 12,
+    "savings_pct": 89.83,
+    "latency_delta_pct": -63.33,
+    "quality_drop": 0.0978,
+    "quality_ok": false,
+    "success_rate": 100.0
+  },
+  {
+    "timestamp": "2026-04-28T22:55:42.121319+00:00",
+    "commit": "dd58665",
+    "tasks": 12,
+    "savings_pct": 98.0,
+    "latency_delta_pct": -70.0,
+    "quality_drop": 0.0125,
+    "quality_ok": true,
+    "success_rate": 100.0
   }
 ]

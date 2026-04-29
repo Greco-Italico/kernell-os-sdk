@@ -301,7 +301,7 @@ class SemanticCache:
         try:
             from qdrant_client.models import PointStruct
             vector = self._embed(prompt)
-            point_id = int(hashlib.md5(entry.query_hash.encode()).hexdigest()[:15], 16)
+            point_id = int(hashlib.md5(entry.query_hash.encode(), usedforsecurity=False).hexdigest()[:15], 16)
             self._qdrant.upsert(
                 collection_name=self._config.collection_name,
                 points=[PointStruct(

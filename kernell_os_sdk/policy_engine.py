@@ -247,6 +247,24 @@ class PolicyEngine:
         if not result.allowed:
             return result
 
+        # Phase 2.5: Shell metacharacter detection (KOS-004)
+        # Catches command substitution $(), backticks, and pipes in ANY command args.
+        # _EXFIL_PATTERNS was previously only checked in _validate_network — now global.
+        full_args_str = " ".join(args)
+        for pattern in _EXFIL_PATTERNS:
+            if pattern.search(full_args_str):
+                logger.warning(
+                    "policy_denied_shell_metachar",
+                    command=base_cmd,
+                    pattern=pattern.pattern,
+                    category="shell_injection",
+                )
+                return PolicyResult(
+                    allowed=False,
+                    reason=f"Shell metacharacter detected in arguments (pattern: {pattern.pattern}). "
+                           f"Command substitution and pipes are not allowed.",
+                )
+
         # Phase 3: Semantic deep inspection
         validator = policy.get("validate")
         if validator:

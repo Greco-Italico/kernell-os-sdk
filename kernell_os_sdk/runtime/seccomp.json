@@ -7,11 +7,16 @@
         "brk", "mmap", "munmap", "mprotect",
         "rt_sigaction", "rt_sigprocmask",
         "openat", "close", "fstat", "lseek", "newfstatat",
-        "execve", "arch_prctl", "set_tid_address", "set_robust_list",
+        "arch_prctl", "set_tid_address", "set_robust_list",
         "prlimit64", "getrandom", "stat", "getdents64",
         "getcwd", "readlink", "ioctl", "fcntl", "uname"
       ],
       "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "names": ["execve"],
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block arbitrary execution from userland"
     }
   ]
 }

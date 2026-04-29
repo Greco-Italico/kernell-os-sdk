@@ -20,8 +20,10 @@ logger = logging.getLogger("chaos_engine")
 PG_DSN = os.environ.get("KERNELL_PG_DSN", "dbname=kernell user=kernell password=securepassword host=localhost")
 
 def run_cmd(cmd):
-    """Executes a shell command."""
-    subprocess.run(cmd, shell=True, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    """Executes a command safely without shell injection risk."""
+    import shlex
+    argv = shlex.split(cmd) if isinstance(cmd, str) else cmd
+    subprocess.run(argv, shell=False, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def setup_db():
     conn = get_connection(PG_DSN)

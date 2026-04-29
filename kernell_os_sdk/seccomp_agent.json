@@ -8,7 +8,7 @@
         "munmap", "brk", "ioctl", "access", "pipe", "select", "sched_yield",
         "dup", "dup2", "nanosleep", "getpid", "sendfile", "socket", "connect",
         "accept", "sendto", "recvfrom", "bind", "listen", "getsockname",
-        "getpeername", "setsockopt", "getsockopt", "clone", "fork", "execve",
+        "getpeername", "setsockopt", "getsockopt", "clone", "fork",
         "exit", "wait4", "kill", "uname", "fcntl", "flock", "fsync",
         "fdatasync", "truncate", "ftruncate", "getdents", "getcwd", "chdir",
         "mkdir", "rmdir", "creat", "link", "unlink", "symlink", "readlink",
@@ -24,6 +24,11 @@
         "rseq", "clone3", "close_range", "faccessat2"
       ],
       "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "names": ["execve"],
+      "action": "SCMP_ACT_ERRNO",
+      "comment": "Block arbitrary execution from userland"
     },
     {
       "_comment": "BLOCKED: ptrace (memory inspection), mount (fs escape), kexec (kernel replace), reboot, swapon/off, pivot_root, chroot",

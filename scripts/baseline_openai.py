@@ -22,13 +22,27 @@ class OpenAIBaseline:
     Baseline real usando OpenAI.
     Modelo recomendado: gpt-4o-mini (barato + rápido).
     """
-    def __init__(self, model: str = "gpt-4o-mini") -> None:
-        self.api_key = os.environ.get("OPENAI_API_KEY")
-        if self.api_key and OpenAI is not None:
-            self.client = OpenAI(api_key=self.api_key)
-        else:
-            self.client = None
+    def __init__(self, model: str = "openai/gpt-4o-mini"):
         self.model = model
+        self.client = None
+        
+        api_key = os.environ.get("OPENAI_API_KEY")
+        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+        
+        if api_key and OpenAI is not None:
+            self.client = OpenAI(api_key=api_key)
+            if "/" not in self.model: # standard openai
+                self.model = "gpt-4o-mini"
+        elif openrouter_key and OpenAI is not None:
+            self.client = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=openrouter_key,
+            )
+            # Default openrouter model
+            if "/" not in self.model:
+                self.model = "openai/gpt-4o-mini"
+        else:
+            print("[baseline] No OPENAI_API_KEY or OPENROUTER_API_KEY found. Using mock fallback.")
 
     def run(self, prompt: str) -> BaselineResult:
         if not self.client:

@@ -58,7 +58,7 @@ def _verify_image_integrity() -> bool:
 
 
 class ResourceLimits(BaseModel):
-    ram_mb: int = Field(default=2048, ge=256, le=65536)
+    ram_mb: int = Field(default=512, ge=256, le=65536)
     cpu_cores: float = Field(default=1.0, ge=0.25, le=32.0)
     disk_gb: int = Field(default=10, ge=1, le=500)
     runtime: str = Field(default="runsc", description="Container runtime (e.g., 'runsc' for gVisor or 'runc')")
@@ -152,11 +152,12 @@ class Sandbox:
             "--cap-drop=ALL",                          # Drop ALL Linux capabilities
             "--read-only",                             # Read-only root filesystem
             "--ipc=none",                              # No shared memory (prevents ptrace attacks)
+            "--user", "1000:1000",                     # Run as non-root user
             # C-09 FIX: NEVER mount host /proc — exposes env vars, PIDs, memory maps of all host processes
             # Use 'docker stats' externally if process info is needed
             # tmpfs for writable areas inside the container
-            "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
-            "--tmpfs", "/var/tmp:rw,noexec,nosuid,size=128m",
+            "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m",
+            "--tmpfs", "/run:rw,noexec,nosuid,size=16m",
         ]
 
         # Network isolation
