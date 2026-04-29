@@ -27,6 +27,38 @@ import structlog
 logger = structlog.get_logger("kernell.security.adaptive")
 
 
+# ── Campaign Detector ────────────────────────────────────────────────────────
+
+class CampaignDetector:
+    """
+    Identifies if multiple actors are coordinating attacks by sharing
+    the same attack patterns (Sybil / Campaign detection).
+    """
+    def __init__(self, campaign_threshold: int = 3):
+        self.actor_patterns = defaultdict(set)
+        self.pattern_actors = defaultdict(set)
+        self.campaign_threshold = campaign_threshold
+        self.active_campaigns = []
+
+    def record_event(self, actor_id: str, pattern_key: str):
+        self.actor_patterns[actor_id].add(pattern_key)
+        self.pattern_actors[pattern_key].add(actor_id)
+
+    def detect(self):
+        campaigns = []
+        for pattern, actors in self.pattern_actors.items():
+            if len(actors) >= self.campaign_threshold:
+                campaigns.append({
+                    "id": f"camp_{hash(pattern) % 10000:04x}",
+                    "pattern": pattern,
+                    "actors": list(actors),
+                    "confidence": min(1.0, len(actors) * 0.3),
+                    "status": "active"
+                })
+        self.active_campaigns = campaigns
+        return campaigns
+
+
 # ── Pattern Learner ──────────────────────────────────────────────────────────
 
 @dataclass
@@ -38,9 +70,12 @@ class LearnedPattern:
     first_seen: float
     last_seen: float
     hit_count: int = 1
+    status: str = "VALIDATING"  # CANDIDATE -> VALIDATING -> PROMOTED -> REJECTED
 
     def decay(self, rate: float = 0.01):
         """Patterns that stop appearing lose confidence over time."""
+        if self.status == "PROMOTED":
+            return # Promoted patterns don't decay automatically
         age_hours = (time.time() - self.last_seen) / 3600
         self.confidence *= max(0.1, 1.0 - (rate * age_hours))
 
@@ -79,10 +114,14 @@ class PatternLearner:
             self._candidates[key]["actors"].add(actor_id)
             self._candidates[key]["count"] += 1
 
+            # Record in CampaignDetector (will be handled by orchestrator, but we emit the event conceptually)
+            # We just flag it as a candidate here
+            
             # Promote to learned pattern if seen from multiple actors
             if (self._candidates[key]["count"] >= self._promotion_threshold
                     and len(self._candidates[key]["actors"]) >= 2):
                 self._promote(key)
+        return [frag.lower().strip() for frag in fragments if len(frag.lower().strip()) >= 5]
 
     def _extract_fragments(self, payload: str) -> List[str]:
         """Extract potentially meaningful attack fragments from payload."""
@@ -106,13 +145,25 @@ class PatternLearner:
 
         return fragments
 
-    def _promote(self, key: str):
+    def _validate_pattern(self, key: str, safe_dataset: List[str] = None) -> bool:
+        if not safe_dataset:
+            return True # Fallback if no validation data
+        false_hits = 0
+        for task in safe_dataset:
+            if re.search(re.escape(key), task.lower()):
+                false_hits += 1
+        fp_rate = false_hits / len(safe_dataset)
+        return fp_rate < 0.05
+
+    def _promote(self, key: str, safe_dataset: List[str] = None):
         """Promote a candidate to a learned pattern."""
         candidate = self._candidates[key]
 
         # Don't re-promote
         if any(lp.regex == re.escape(key) for lp in self._learned):
             return
+
+        status = "PROMOTED" if self._validate_pattern(key, safe_dataset) else "REJECTED"
 
         pattern = LearnedPattern(
             regex=re.escape(key),
@@ -121,9 +172,10 @@ class PatternLearner:
             first_seen=candidate["first_seen"],
             last_seen=time.time(),
             hit_count=candidate["count"],
+            status=status
         )
         self._learned.append(pattern)
-        logger.info("pattern_learned",
+        logger.info(f"pattern_{status.lower()}",
                      pattern=key[:50],
                      confidence=f"{pattern.confidence:.2f}",
                      actors=len(candidate["actors"]))
@@ -132,7 +184,7 @@ class PatternLearner:
         """Check if text matches any learned pattern."""
         text_lower = text.lower()
         for pattern in self._learned:
-            if pattern.confidence > 0.3:
+            if pattern.status == "PROMOTED" or (pattern.status == "VALIDATING" and pattern.confidence > 0.6):
                 if re.search(pattern.regex, text_lower):
                     pattern.hit_count += 1
                     pattern.last_seen = time.time()
@@ -153,57 +205,51 @@ class PatternLearner:
 
 # ── Dynamic Thresholds ───────────────────────────────────────────────────────
 
-class DynamicThresholds:
+class BayesianThresholdTuner:
     """
-    Adjusts risk thresholds based on observed attack pressure.
-    Under heavy attack → thresholds tighten (more paranoid).
-    Under calm → thresholds relax slightly (better UX).
-    Always bounded by hard limits.
+    Adjusts risk thresholds based on Bayesian probability of an actual attack,
+    rather than just raw event volume. Prevents over-reaction and blindness.
     """
 
     def __init__(self):
-        self.base_session_max = 100
-        self.base_actor_flag = 150.0
-        self._pressure_window: List[float] = []  # timestamps of blocked events
-        self._window_seconds = 3600  # 1 hour rolling window
+        self.observed_attacks = 0
+        self.total_events = 0
 
-    def record_block(self):
-        """Record a block event for pressure calculation."""
-        self._pressure_window.append(time.time())
-        self._cleanup()
-
-    def _cleanup(self):
-        cutoff = time.time() - self._window_seconds
-        self._pressure_window = [t for t in self._pressure_window if t > cutoff]
+    def update(self, severity: str):
+        self.total_events += 1
+        if severity in ["CRITICAL", "HIGH"]:
+            self.observed_attacks += 1
 
     @property
-    def pressure(self) -> float:
-        """Current attack pressure (0.0 = calm, 1.0+ = under attack)."""
-        self._cleanup()
-        # Normalize: >20 blocks/hour = pressure 1.0
-        return min(2.0, len(self._pressure_window) / 20.0)
+    def attack_probability(self) -> float:
+        # Simple Laplace smoothing
+        return (self.observed_attacks + 1) / (self.total_events + 2)
 
     @property
     def session_max_risk(self) -> int:
-        """Dynamic session risk threshold. Tightens under pressure."""
-        # Under pressure: threshold drops (more paranoid)
-        # Calm: threshold stays at base
-        # Hard floor: never above base, never below 50
-        adjusted = self.base_session_max * (1.0 - (self.pressure * 0.3))
-        return max(50, min(self.base_session_max, int(adjusted)))
+        p = self.attack_probability
+        if p > 0.2:
+            return 80  # Tighten
+        elif p < 0.05:
+            return 120 # Relax
+        return 100
 
     @property
     def actor_flag_threshold(self) -> float:
-        """Dynamic actor flagging threshold."""
-        adjusted = self.base_actor_flag * (1.0 - (self.pressure * 0.25))
-        return max(75.0, min(self.base_actor_flag, adjusted))
+        p = self.attack_probability
+        if p > 0.2:
+            return 120.0
+        elif p < 0.05:
+            return 180.0
+        return 150.0
 
     def status(self) -> Dict:
         return {
-            "pressure": round(self.pressure, 2),
+            "attack_prob": round(self.attack_probability, 3),
             "session_max": self.session_max_risk,
-            "actor_flag": round(self.actor_flag_threshold, 1),
-            "blocks_last_hour": len(self._pressure_window),
+            "actor_flag": self.actor_flag_threshold,
+            "total_events": self.total_events,
+            "observed_attacks": self.observed_attacks
         }
 
 
@@ -290,10 +336,12 @@ class AdaptiveRiskEngine:
         risk_mod = engine.pre_check(actor_id, origin)
     """
 
-    def __init__(self):
+    def __init__(self, safe_dataset: List[str] = None):
         self.learner = PatternLearner(promotion_threshold=3)
-        self.thresholds = DynamicThresholds()
+        self.campaigns = CampaignDetector()
+        self.tuner = BayesianThresholdTuner()
         self.reputation = ReputationNetwork()
+        self.safe_dataset = safe_dataset or []
         self._decision_count = 0
         self._started = time.time()
 
@@ -304,8 +352,8 @@ class AdaptiveRiskEngine:
         result = {
             "risk_multiplier": 1.0,
             "learned_pattern_match": None,
-            "dynamic_session_max": self.thresholds.session_max_risk,
-            "dynamic_actor_flag": self.thresholds.actor_flag_threshold,
+            "dynamic_session_max": self.tuner.session_max_risk,
+            "dynamic_actor_flag": self.tuner.actor_flag_threshold,
         }
 
         # 1. Check trust modifier from reputation
@@ -321,7 +369,7 @@ class AdaptiveRiskEngine:
         return result
 
     def on_decision(self, event_type: str, actor_id: str, payload: str,
-                    was_blocked: bool, origin: str = "unknown"):
+                    was_blocked: bool, origin: str = "unknown", severity: str = "LOW"):
         """
         Called AFTER each CSL decision. Feeds all adaptive systems.
         """
@@ -331,10 +379,14 @@ class AdaptiveRiskEngine:
         if origin == "m2m":
             self.reputation.record_interaction(actor_id, was_blocked)
 
-        # Feed pattern learner (only blocked events)
+        self.tuner.update(severity)
+
+        # Feed pattern learner and campaign detector (only blocked events)
         if was_blocked:
-            self.learner.observe(payload, event_type, actor_id)
-            self.thresholds.record_block()
+            patterns = self.learner.observe(payload, event_type, actor_id)
+            for p in patterns:
+                self.campaigns.record_event(actor_id, p)
+            self.campaigns.detect()
 
         # Periodic maintenance
         if self._decision_count % 100 == 0:
@@ -346,7 +398,8 @@ class AdaptiveRiskEngine:
             "uptime_hours": round((time.time() - self._started) / 3600, 2),
             "total_decisions": self._decision_count,
             "learned_patterns": len(self.learner.learned_patterns),
-            "thresholds": self.thresholds.status(),
+            "active_campaigns": len(self.campaigns.active_campaigns),
+            "tuner": self.tuner.status(),
             "flagged_agents": [
                 {"id": a.agent_id, "trust": a.trust_score, "block_rate": round(a.block_rate, 2)}
                 for a in self.reputation.flagged_agents()
@@ -360,9 +413,10 @@ class AdaptiveRiskEngine:
         print(f"  Uptime:           {s['uptime_hours']}h")
         print(f"  Decisions:        {s['total_decisions']}")
         print(f"  Learned patterns: {s['learned_patterns']}")
-        print(f"  Pressure:         {s['thresholds']['pressure']}")
-        print(f"  Session max:      {s['thresholds']['session_max']}/100")
-        print(f"  Actor flag:       {s['thresholds']['actor_flag']}/150")
+        print(f"  Active Campaigns: {s['active_campaigns']}")
+        print(f"  Attack Prob:      {s['tuner']['attack_prob']:.2f}")
+        print(f"  Session max:      {s['tuner']['session_max']}/100")
+        print(f"  Actor flag:       {s['tuner']['actor_flag']}/150")
         if s['flagged_agents']:
             print(f"  ⚠️  Flagged agents:")
             for a in s['flagged_agents']:

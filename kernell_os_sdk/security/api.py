@@ -69,10 +69,16 @@ def get_emerging_patterns():
             "confidence": p.confidence,
             "hits": p.hit_count,
             "source": p.source,
+            "status": p.status,
             "last_seen": p.last_seen
         }
         for p in adaptive_engine.learner.learned_patterns
     ]
+
+@app.get("/api/v1/security/campaigns")
+def get_campaigns():
+    """Returns detected coordinated campaigns."""
+    return adaptive_engine.campaigns.active_campaigns
 
 @app.get("/api/v1/security/adaptive-status")
 def get_adaptive_status():

@@ -397,7 +397,7 @@ class CognitiveSecurityLayer:
         if self.adaptive_engine:
             self.adaptive_engine.on_decision(
                 "tool_governor", actor_id,
-                str(args), would_block, origin
+                str(args), would_block, origin, severity=severity
             )
 
         if self.observer:
@@ -435,7 +435,7 @@ class CognitiveSecurityLayer:
         if self.adaptive_engine:
             self.adaptive_engine.on_decision(
                 "output_guard", actor_id,
-                response[:200], would_block, origin
+                response[:200], would_block, origin, severity=severity
             )
 
         if self.observer:
