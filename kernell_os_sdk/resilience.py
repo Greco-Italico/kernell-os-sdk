@@ -72,6 +72,7 @@ class CircuitBreaker:
         self._consecutive_successes: int = 0
         self._total_failures: int = 0
         self._total_successes: int = 0
+        self._trips: int = 0  # Total times circuit has opened
         self._last_failure_time: float = 0.0
         self._last_failure_reason: str = ""
         self._opened_at: float = 0.0
@@ -131,8 +132,9 @@ class CircuitBreaker:
             elif self._consecutive_failures >= self.failure_threshold:
                 self._state = CircuitState.OPEN
                 self._opened_at = time.time()
+                self._trips += 1
                 logger.warning(
-                    f"[{self.name}] Circuit OPENED after {self._consecutive_failures} "
+                    f"[{self.name}] Circuit OPENED (trip #{self._trips}) after {self._consecutive_failures} "
                     f"consecutive failures. Last: {reason}"
                 )
                 if self.on_open:
@@ -158,6 +160,11 @@ class CircuitBreaker:
                 return 0.0
             elapsed = time.time() - self._opened_at
             return max(0.0, self.recovery_timeout - elapsed)
+
+    @property
+    def trips(self) -> int:
+        """Total number of times this circuit has tripped open."""
+        return self._trips
 
     def stats(self) -> CircuitStats:
         """Get current circuit breaker statistics."""
@@ -191,3 +198,72 @@ class CircuitBreaker:
 class CircuitOpenError(Exception):
     """Raised when trying to execute through an open circuit."""
     pass
+
+
+# ── Registry (ported from core/circuit_breaker.py) ────────────────────────────
+
+class CircuitBreakerRegistry:
+    """
+    Global registry of circuit breakers. Singleton pattern.
+    Ported from Kernell OS monorepo core/circuit_breaker.py.
+
+    Usage:
+        from kernell_os_sdk.resilience import CircuitBreakerRegistry
+
+        cb = CircuitBreakerRegistry.get("llm:openai", failure_threshold=3)
+        if cb.can_execute():
+            result = call_openai()
+            cb.record_success()
+    """
+
+    _breakers: dict[str, CircuitBreaker] = {}
+    _on_open_default: Optional[Callable] = None
+
+    @classmethod
+    def configure(cls, on_open: Optional[Callable] = None):
+        """Set default callbacks for all new circuit breakers."""
+        cls._on_open_default = on_open
+
+    @classmethod
+    def get(
+        cls,
+        name: str,
+        failure_threshold: int = 3,
+        success_threshold: int = 2,
+        recovery_timeout: float = 300.0,
+        on_open: Optional[Callable] = None,
+    ) -> CircuitBreaker:
+        """Get or create a circuit breaker by name."""
+        if name not in cls._breakers:
+            cls._breakers[name] = CircuitBreaker(
+                name=name,
+                failure_threshold=failure_threshold,
+                success_threshold=success_threshold,
+                recovery_timeout=recovery_timeout,
+                on_open=on_open or cls._on_open_default,
+            )
+        return cls._breakers[name]
+
+    @classmethod
+    def status_all(cls) -> dict[str, CircuitStats]:
+        """Get stats for all registered circuit breakers."""
+        return {name: cb.stats() for name, cb in cls._breakers.items()}
+
+    @classmethod
+    def reset_all(cls):
+        """Reset all circuit breakers to CLOSED."""
+        for cb in cls._breakers.values():
+            cb.reset()
+
+    @classmethod
+    def open_circuits(cls) -> list[str]:
+        """List names of all currently OPEN circuits."""
+        return [name for name, cb in cls._breakers.items() if cb.state == CircuitState.OPEN]
+
+    @classmethod
+    def summary(cls) -> dict[str, int]:
+        """Quick summary: counts by state."""
+        counts = {"CLOSED": 0, "OPEN": 0, "HALF_OPEN": 0}
+        for cb in cls._breakers.values():
+            counts[cb.state.value] += 1
+        return counts
