@@ -15,6 +15,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from kernell_os_sdk.observability.event_bus import GLOBAL_EVENT_BUS
+
 logger = logging.getLogger("kernell.agent.reliability")
 
 @dataclass
@@ -54,10 +56,12 @@ class ReliabilityEngine:
 
         if self.total_failures >= self.policy.max_total_failures:
             logger.error(f"[ARL] Max total failures reached ({self.total_failures}). Aborting.")
+            GLOBAL_EVENT_BUS.emit("arl_block", "current", {"reason": "max_total_failures", "tool": tool_name})
             return "abort"
 
         if current_fails > self.policy.max_retries_per_action:
             logger.warning(f"[ARL] Tool '{tool_name}' failed {current_fails} times. Action stuck loop triggered.")
+            GLOBAL_EVENT_BUS.emit("arl_block", "current", {"reason": "consecutive_failures", "tool": tool_name})
             return self.policy.on_stuck_loop
 
         # Apply backoff

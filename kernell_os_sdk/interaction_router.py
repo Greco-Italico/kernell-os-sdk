@@ -14,6 +14,8 @@ import logging
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
 
+from kernell_os_sdk.observability.event_bus import GLOBAL_EVENT_BUS
+
 logger = logging.getLogger("kernell.agent.interaction")
 
 @dataclass
@@ -61,7 +63,7 @@ class InteractionRouter:
 
             if dom_element_found:
                 if intent == "click":
-                    return RoutedAction(
+                    route = RoutedAction(
                         tool_name="browser_click",
                         args={"selector": selector},
                         confidence=0.95,
@@ -69,13 +71,20 @@ class InteractionRouter:
                         reasoning="DOM selector available, highly reliable."
                     )
                 elif intent == "type":
-                    return RoutedAction(
+                    route = RoutedAction(
                         tool_name="browser_type",
                         args={"selector": selector, "text": text},
                         confidence=0.95,
                         fallback_strategy="vision_os",
                         reasoning="DOM input available, highly reliable."
                     )
+                    
+                if route:
+                    GLOBAL_EVENT_BUS.emit("interaction_routed", "current", {
+                        "intent": intent, "target": target, "route": route.tool_name, 
+                        "confidence": route.confidence, "dom_match": True, "vision_match": False
+                    })
+                    return route
 
         # 2. Attempt Vision + OS Mapping (Medium Confidence)
         if self.os and world_model and world_model.visual_context:
@@ -85,7 +94,7 @@ class InteractionRouter:
                 conf = visual_el.confidence * 0.9  # OS is inherently slightly less reliable than DOM
                 
                 if intent == "click":
-                    return RoutedAction(
+                    route = RoutedAction(
                         tool_name="os_click",
                         args={"x": cx, "y": cy},
                         confidence=conf,
@@ -93,21 +102,31 @@ class InteractionRouter:
                         reasoning=f"Found visual element '{visual_el.label}' via Vision."
                     )
                 elif intent == "type":
-                    # OS typing usually requires clicking first, but we assume the tool handles it 
-                    # or the agent plans click -> type. We just route the type.
-                    return RoutedAction(
+                    route = RoutedAction(
                         tool_name="os_type",
                         args={"text": text},
                         confidence=conf,
                         fallback_strategy="replan",
                         reasoning="Using OS native typing."
                     )
+                    
+                if route:
+                    GLOBAL_EVENT_BUS.emit("interaction_routed", "current", {
+                        "intent": intent, "target": target, "route": route.tool_name, 
+                        "confidence": route.confidence, "dom_match": False, "vision_match": True
+                    })
+                    return route
 
         # 3. Fallback: Cannot resolve
-        return RoutedAction(
+        route = RoutedAction(
             tool_name="unknown",
             args={},
             confidence=0.0,
             fallback_strategy="abort",
             reasoning=f"Could not map intent '{intent}' on target '{target}' to DOM or Vision."
         )
+        GLOBAL_EVENT_BUS.emit("interaction_routed", "current", {
+            "intent": intent, "target": target, "route": route.tool_name, 
+            "confidence": route.confidence, "dom_match": False, "vision_match": False
+        })
+        return route

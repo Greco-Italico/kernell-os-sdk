@@ -11,6 +11,8 @@ import time
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
+from kernell_os_sdk.observability.event_bus import GLOBAL_EVENT_BUS
+
 logger = logging.getLogger("kernell.agent.perception")
 
 # ══════════════════════════════════════════════════════════════════════
@@ -137,12 +139,19 @@ DO NOT wrap the JSON in markdown blocks. Output raw JSON only."""
                     attributes=el_data.get("attributes", {})
                 ))
                 
-            return ScreenState(
+            screen_state = ScreenState(
                 screenshot_id=f"frame_{int(time.time())}",
                 resolution=resolution,
                 elements=elements,
                 raw_text=data.get("raw_text", "")
             )
+            
+            GLOBAL_EVENT_BUS.emit("vision_updated", "current", {
+                "elements": [e.to_dict() for e in elements],
+                "screenshot": image_base64
+            })
+            
+            return screen_state
             
         except Exception as e:
             logger.error(f"[GeminiVisionAdapter] Failed to analyze image: {e}")

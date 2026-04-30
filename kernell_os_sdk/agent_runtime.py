@@ -50,6 +50,7 @@ from kernell_os_sdk.agent_validation import ToolValidator
 from kernell_os_sdk.agent_world_model import WorldModelState, WorldModelUpdater
 from kernell_os_sdk.agent_reliability import ReliabilityEngine, FailurePolicy
 from kernell_os_sdk.interaction_router import InteractionRouter
+from kernell_os_sdk.observability.event_bus import GLOBAL_EVENT_BUS
 
 logger = logging.getLogger("kernell.agent")
 
@@ -365,6 +366,7 @@ class Agent:
 
         result = AgentResult(goal=goal)
         logger.info(f"[Agent] Starting/Resuming: {goal[:100]} (session: {session_id})")
+        GLOBAL_EVENT_BUS.emit("agent_started", session_id, {"goal": goal, "session_id": session_id})
 
         for step_idx in range(start_step, self.config.max_steps):
             # ── Plan next action ─────────────────────────────────
@@ -373,7 +375,15 @@ class Agent:
             if plan is None:
                 result.final_answer = "Planning failed — could not determine next action"
                 self._save_checkpoint(session_id, goal, step_idx, step_history, TaskStatus.FAILED)
+                GLOBAL_EVENT_BUS.emit("agent_error", session_id, {"error": "Planning failed"})
                 break
+                
+            GLOBAL_EVENT_BUS.emit("step_started", session_id, {
+                "step": step_idx,
+                "intent": getattr(plan, "intent", ""),
+                "action": plan.action.value,
+                "description": plan.description
+            })
 
             # ── Phase 6.5: Evaluate Plan Viability ───────────────
             action_key = plan.tool_name or plan.code_task or plan.action.value
@@ -399,6 +409,7 @@ class Agent:
                 if directive == "abort":
                     result.final_answer = f"Agent aborted due to repeated failures. Last error: {step_result.error or step_result.output}"
                     self._save_checkpoint(session_id, goal, step_idx + 1, step_history, TaskStatus.FAILED)
+                    GLOBAL_EVENT_BUS.emit("agent_error", session_id, {"error": "Max failures reached."})
                     break
 
             # Record in history for next planning iteration
@@ -407,6 +418,12 @@ class Agent:
                 "action": plan.action.value,
                 "description": plan.description,
                 "output": step_result.output[:500] if is_successful else step_result.error or step_result.output[:500],
+                "success": step_result.success,
+                "is_valid": step_result.is_valid,
+            })
+            
+            GLOBAL_EVENT_BUS.emit("step_completed", session_id, {
+                "step": step_idx,
                 "success": step_result.success,
                 "is_valid": step_result.is_valid,
             })
@@ -426,6 +443,7 @@ class Agent:
                     action=f"{plan.action.value} -> {plan.tool_name or plan.code_task}",
                     observation=step_result.output
                 )
+                GLOBAL_EVENT_BUS.emit("world_model_updated", session_id, self.world_model.to_dict())
 
             # ── Safety: detect spinning ──────────────────────────
             if len(step_history) >= 3:
