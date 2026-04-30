@@ -15,6 +15,8 @@ Without this, swarm execution is just expensive parallelism.
 
 import hashlib
 import logging
+import math
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -55,7 +57,7 @@ class Cluster:
     """A group of semantically similar candidates."""
     representative: str             # the "best" output in this cluster
     items: List[Candidate] = field(default_factory=list)
-    fingerprint: str = ""           # hash-based fingerprint
+    fingerprint: Any = None         # TF-IDF vector for cosine similarity
     score: float = 0.0
 
 
@@ -77,7 +79,7 @@ class ConsensusEngine:
     def __init__(
         self,
         llm_registry=None,         # for LLM Judge calls
-        similarity_threshold: float = 0.85,
+        similarity_threshold: float = 0.85,  # Adjusted for cosine similarity
         judge_ambiguity_threshold: float = 0.2,
     ):
         self.llm = llm_registry
@@ -182,23 +184,32 @@ class ConsensusEngine:
         
         return clusters
     
-    def _fingerprint(self, text: str) -> str:
+    def _fingerprint(self, text: str) -> Dict[str, float]:
         """
-        Content fingerprint for fast similarity comparison.
-        v0: normalized hash-based (works for exact/near-exact matches)
-        v1: replace with embedding vector
+        Content fingerprint for semantic similarity comparison.
+        v1: Bag-of-Words Vector (TF) for local Cosine Similarity
+        (zero external dependencies, runs anywhere).
         """
-        # Normalize: lowercase, strip whitespace, collapse spaces
-        normalized = " ".join(text.lower().split())
-        return hashlib.md5(normalized.encode()).hexdigest()
+        import string
+        # Normalize: lowercase, remove punctuation, tokenize
+        translator = str.maketrans('', '', string.punctuation)
+        words = text.lower().translate(translator).split()
+        return dict(Counter(words))
     
-    def _similarity(self, fp1: str, fp2: str) -> float:
+    def _similarity(self, fp1: Dict[str, float], fp2: Dict[str, float]) -> float:
         """
-        Compare two fingerprints.
-        v0: binary match (0.0 or 1.0)
-        v1: cosine similarity on embedding vectors
+        Cosine similarity between two term-frequency vectors.
         """
-        return 1.0 if fp1 == fp2 else 0.0
+        intersection = set(fp1.keys()) & set(fp2.keys())
+        dot_product = sum(fp1[w] * fp2[w] for w in intersection)
+        
+        mag1 = math.sqrt(sum(v**2 for v in fp1.values()))
+        mag2 = math.sqrt(sum(v**2 for v in fp2.values()))
+        
+        if mag1 == 0 or mag2 == 0:
+            return 0.0
+            
+        return dot_product / (mag1 * mag2)
     
     # ── Stage 3: Cluster Scoring ─────────────────────────────────────
     
