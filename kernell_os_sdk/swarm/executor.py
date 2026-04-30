@@ -251,6 +251,7 @@ class SwarmExecutor:
                 "tier": decision.tier.value,
                 "model": decision.model_id,
                 "confidence": decision.confidence,
+                "expected_latency": decision.expected_latency,
             },
             "outcome": {
                 "success": outcome.success,
