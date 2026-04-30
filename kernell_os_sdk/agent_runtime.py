@@ -47,6 +47,7 @@ from kernell_os_sdk.agent_persistence import (
     CheckpointManager, AgentStateSnapshot, TaskStatus
 )
 from kernell_os_sdk.agent_validation import ToolValidator
+from kernell_os_sdk.agent_world_model import WorldModelState, WorldModelUpdater
 
 logger = logging.getLogger("kernell.agent")
 
@@ -307,6 +308,8 @@ class Agent:
         self._gate = execution_gate
         self._checkpoint_manager = checkpoint_manager
         self._validator = ToolValidator(llm_registry)
+        self._world_updater = WorldModelUpdater(llm_registry)
+        self.world_model = WorldModelState()
 
     def run(self, goal: str, session_id: Optional[str] = None) -> AgentResult:
         """
@@ -333,6 +336,10 @@ class Agent:
                 self.memory.clear()
                 for k, v in checkpoint.memory_dump.items():
                     self.memory.remember(k, v, source="checkpoint")
+                    
+                # Phase 5.7: Restore World Model
+                if checkpoint.world_model:
+                    self.world_model = WorldModelState.from_dict(checkpoint.world_model)
                     
                 if checkpoint.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
                     logger.warning(f"[Agent] Session {session_id} is already {checkpoint.status.value}")
@@ -374,6 +381,15 @@ class Agent:
                 result.success = True
                 self._save_checkpoint(session_id, goal, step_idx + 1, step_history, TaskStatus.COMPLETED)
                 break
+                
+            # ── Phase 5.7: Update World Model ────────────────────
+            # We don't update beliefs on purely internal "think" or "memory" actions
+            if plan.action in (ActionType.TOOL, ActionType.CODE):
+                self.world_model = self._world_updater.update_beliefs(
+                    self.world_model,
+                    action=f"{plan.action.value} -> {plan.tool_name or plan.code_task}",
+                    observation=step_result.output
+                )
 
             # ── Safety: detect spinning ──────────────────────────
             if len(step_history) >= 3:
@@ -407,6 +423,10 @@ class Agent:
     def _plan_next(self, goal: str, history: List[Dict]) -> Optional[StepPlan]:
         """Ask the LLM to plan the next action."""
         context_parts = [f"GOAL: {goal}"]
+
+        # Phase 5.7: World Model Context
+        if self.world_model:
+            context_parts.append(f"WORLD MODEL:\n{json.dumps(self.world_model.to_dict(), default=str)[:1500]}")
 
         # Memory context
         mem = self.memory.dump()
@@ -676,5 +696,6 @@ class Agent:
             history=history,
             created_at=time.time(),
             updated_at=time.time(),
+            world_model=self.world_model.to_dict() if self.world_model else None
         )
         self._checkpoint_manager.save_checkpoint(state)

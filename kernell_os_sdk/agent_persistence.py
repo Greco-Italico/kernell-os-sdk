@@ -41,6 +41,7 @@ class AgentStateSnapshot:
     created_at: float
     updated_at: float
     metadata: Dict[str, Any] = field(default_factory=dict)
+    world_model: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -77,9 +78,17 @@ class CheckpointManager:
                     history TEXT NOT NULL,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
-                    metadata TEXT NOT NULL
+                    metadata TEXT NOT NULL,
+                    world_model TEXT
                 )
             """)
+            
+            # Simple migration for existing DBs
+            try:
+                conn.execute("ALTER TABLE agent_checkpoints ADD COLUMN world_model TEXT")
+            except sqlite3.OperationalError:
+                pass # Column exists
+                
             conn.commit()
 
     def save_checkpoint(self, state: AgentStateSnapshot):
@@ -89,15 +98,16 @@ class CheckpointManager:
             conn.execute("""
                 INSERT INTO agent_checkpoints (
                     session_id, goal, status, current_step, memory_dump, 
-                    history, created_at, updated_at, metadata
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    history, created_at, updated_at, metadata, world_model
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(session_id) DO UPDATE SET
                     status=excluded.status,
                     current_step=excluded.current_step,
                     memory_dump=excluded.memory_dump,
                     history=excluded.history,
                     updated_at=excluded.updated_at,
-                    metadata=excluded.metadata
+                    metadata=excluded.metadata,
+                    world_model=excluded.world_model
             """, (
                 state.session_id,
                 state.goal,
@@ -107,7 +117,8 @@ class CheckpointManager:
                 json.dumps(state.history),
                 state.created_at,
                 state.updated_at,
-                json.dumps(state.metadata)
+                json.dumps(state.metadata),
+                json.dumps(state.world_model) if state.world_model else None
             ))
             conn.commit()
         logger.debug(f"[CheckpointManager] Saved checkpoint for {state.session_id} at step {state.current_step}")
@@ -133,7 +144,8 @@ class CheckpointManager:
                 history=json.loads(row["history"]),
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
-                metadata=json.loads(row["metadata"])
+                metadata=json.loads(row["metadata"]),
+                world_model=json.loads(row["world_model"]) if row["world_model"] else None
             )
 
     def list_active_sessions(self) -> List[str]:
