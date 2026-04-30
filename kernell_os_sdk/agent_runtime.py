@@ -46,6 +46,7 @@ import uuid
 from kernell_os_sdk.agent_persistence import (
     CheckpointManager, AgentStateSnapshot, TaskStatus
 )
+from kernell_os_sdk.agent_validation import ToolValidator
 
 logger = logging.getLogger("kernell.agent")
 
@@ -191,6 +192,7 @@ class StepPlan:
     answer: str = ""
     memory_key: str = ""
     memory_value: Any = None
+    expected_outcome: str = ""
 
 
 @dataclass
@@ -262,7 +264,8 @@ Response format:
   "code_task": "task description (if action=code)",
   "answer": "final answer text (if action=answer)",
   "memory_key": "key (if action=memory)",
-  "memory_value": "value (if action=memory)"
+  "memory_value": "value (if action=memory)",
+  "expected_outcome": "what should visually/technically happen as a result (for tool/code)"
 }
 
 Rules:
@@ -303,6 +306,7 @@ class Agent:
         self._verifier = verifier
         self._gate = execution_gate
         self._checkpoint_manager = checkpoint_manager
+        self._validator = ToolValidator(llm_registry)
 
     def run(self, goal: str, session_id: Optional[str] = None) -> AgentResult:
         """
@@ -477,6 +481,7 @@ class Agent:
             answer=data.get("answer", ""),
             memory_key=data.get("memory_key", ""),
             memory_value=data.get("memory_value"),
+            expected_outcome=data.get("expected_outcome", ""),
         )
 
     # ── Step Execution ───────────────────────────────────────────────
@@ -536,6 +541,13 @@ class Agent:
         try:
             output = tool(**plan.tool_args)
             output_str = str(output)[:5000]
+            
+            # Phase 5.6: Validate expectation
+            if plan.expected_outcome:
+                val_result = self._validator.validate(plan.expected_outcome, output_str)
+                if not val_result.is_valid:
+                    output_str += f"\n\n[VALIDATION FAILED] The expectation was NOT met: {val_result.reason}"
+            
             self.memory.remember(
                 f"tool:{plan.tool_name}:result",
                 output_str, source="tool", step=step_idx,
