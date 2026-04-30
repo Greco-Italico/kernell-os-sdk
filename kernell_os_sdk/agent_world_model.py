@@ -14,6 +14,12 @@ import logging
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, Optional
 
+# Phase 7a: Import perception contract
+try:
+    from kernell_os_sdk.agent_perception import ScreenState
+except ImportError:
+    ScreenState = Any
+
 logger = logging.getLogger("kernell.agent.world_model")
 
 @dataclass
@@ -23,9 +29,13 @@ class WorldModelState:
     entities: Dict[str, Any] = field(default_factory=dict)  # Key elements/objects
     task_phase: str = "exploration"   # e.g., 'exploration', 'execution', 'verification'
     known_facts: Dict[str, Any] = field(default_factory=dict) # Confirmed facts
+    visual_context: Optional[ScreenState] = None # Phase 7a: Grounded visual state
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        if self.visual_context and hasattr(self.visual_context, 'to_dict'):
+            d['visual_context'] = self.visual_context.to_dict()
+        return d
 
     @classmethod
     def from_dict(cls, data: dict) -> "WorldModelState":
