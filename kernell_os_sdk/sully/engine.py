@@ -112,7 +112,11 @@ class SullyEngine:
         best_score, best_model = scored[0]
         tier = self._classify_tier(best_model)
         
-        expected_cost = (features.estimated_tokens / 1000) * best_model.input_cost_per_1k
+        # [AUDIT FIX] Full cost = input + output tokens
+        expected_cost = (
+            (features.estimated_tokens / 1000) * best_model.input_cost_per_1k
+            + (features.estimated_output_tokens / 1000) * best_model.output_cost_per_1k
+        )
         
         # Strategy hint based on features
         strategy = "auto"
@@ -151,7 +155,11 @@ class SullyEngine:
         if model.context_limit < features.estimated_tokens:
             return 0.0
         
-        estimated_cost = (features.estimated_tokens / 1000) * model.input_cost_per_1k
+        # [AUDIT FIX] Full cost = input + output
+        estimated_cost = (
+            (features.estimated_tokens / 1000) * model.input_cost_per_1k
+            + (features.estimated_output_tokens / 1000) * model.output_cost_per_1k
+        )
         if estimated_cost > budget_cap:
             return 0.0
         
@@ -186,6 +194,15 @@ class SullyEngine:
         if features.history_failures > 0:
             # After failures, bias toward higher quality
             score += model.quality_score * features.history_failures * 0.5
+        
+        # [AUDIT FIX] Quality requirement gate — critical tasks reject weak models
+        if features.quality_requirement > 0.8 and model.quality_score < features.quality_requirement:
+            score *= 0.2  # heavy penalty, not zero (allow as last resort)
+        
+        # [AUDIT FIX] Output type awareness — code/critical needs high quality
+        if features.expected_output_type in ("code", "critical_action"):
+            if model.quality_score < 0.8:
+                score *= 0.3
         
         return score
     
@@ -274,8 +291,11 @@ class SullyEngine:
             logger.warning(f"[Sully] Model {decision.model_id} ctx {model.context_limit} < needed {features.estimated_tokens}")
             return self._decide_heuristic(features, market, budget_cap)
         
-        # Check budget
-        real_cost = (features.estimated_tokens / 1000) * model.input_cost_per_1k
+        # Check budget [AUDIT FIX: includes output cost]
+        real_cost = (
+            (features.estimated_tokens / 1000) * model.input_cost_per_1k
+            + (features.estimated_output_tokens / 1000) * model.output_cost_per_1k
+        )
         if real_cost > budget_cap:
             logger.warning(f"[Sully] Model {decision.model_id} cost ${real_cost:.4f} > budget ${budget_cap:.4f}")
             return self._decide_heuristic(features, market, budget_cap)

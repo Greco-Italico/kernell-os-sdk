@@ -28,8 +28,12 @@ class TaskFeatures:
     requires_auth: bool = False
     dom_available: bool = True
     estimated_tokens: int = 1000
+    estimated_output_tokens: int = 500  # [AUDIT FIX] output cost awareness
     history_failures: int = 0       # incremented on escalation
     parallelizable: bool = False    # hint for swarm decomposition
+    # [AUDIT FIX] output awareness — Sully must know when failure is unacceptable
+    expected_output_type: str = "text"  # "text", "json", "code", "critical_action"
+    quality_requirement: float = 0.7   # 0.0 (best effort) → 1.0 (must not fail)
     
 
 @dataclass
@@ -96,3 +100,4 @@ class FinalOutcome:
     final_tier: Tier
     steps: int                      # number of tier attempts
     score: float = 0.0              # computed reward signal for training
+    output: Any = None              # the actual result content
