@@ -445,15 +445,45 @@ class ModelMarketRegistry:
     def mark_rate_limited(self, model_id: str):
         """Mark a model as rate-limited (called by execution layer on 429s)."""
         if model_id in self._cache:
-            self._cache[model_id].rate_limited = True
-            logger.info(f"[Market] {model_id} marked as rate-limited")
+            m = self._cache[model_id]
+            m.rate_limited = True
+            # Penalize reliability on rate limit
+            m.reliability_score = m.reliability_score * 0.8
+            logger.info(f"[Market] {model_id} marked as rate-limited (reliability: {m.reliability_score:.2f})")
     
-    def update_quality_score(self, model_id: str, success: bool):
-        """Update quality score with exponential moving average from telemetry."""
+    def update_market_feedback(self, model_id: str, success: bool, reward: float = 0.0, latency_ms: float = 0.0):
+        """
+        Dynamically adjust market parameters based on real execution telemetry.
+        - quality_score: EMA of real rewards
+        - reliability_score: drops on failure, recovers on success
+        - avg_latency_ms: EMA of real latency
+        """
         if model_id in self._cache:
             m = self._cache[model_id]
-            alpha = 0.1  # learning rate
-            m.quality_score = m.quality_score * (1 - alpha) + (1.0 if success else 0.0) * alpha
+            
+            # EMA Learning rates
+            alpha_q = 0.1  # Quality adapts slowly
+            alpha_l = 0.2  # Latency adapts faster
+            
+            # 1. Update Quality (using Reward V2 if available, else success binary)
+            signal = max(0.0, min(1.0, reward)) if reward != 0.0 else (1.0 if success else 0.0)
+            m.quality_score = m.quality_score * (1 - alpha_q) + signal * alpha_q
+            
+            # 2. Update Reliability
+            if success:
+                m.reliability_score = min(1.0, m.reliability_score + 0.05) # Recover
+            else:
+                m.reliability_score = m.reliability_score * 0.7 # Punish hard
+                
+            # 3. Update Latency
+            if success and latency_ms > 0:
+                m.avg_latency_ms = m.avg_latency_ms * (1 - alpha_l) + latency_ms * alpha_l
+                
+            logger.debug(f"[Market] Updated {model_id}: Q={m.quality_score:.2f}, Rel={m.reliability_score:.2f}, Lat={m.avg_latency_ms:.0f}ms")
+            
+    # Keep for backward compatibility during transition
+    def update_quality_score(self, model_id: str, success: bool):
+        self.update_market_feedback(model_id, success)
     
     def status(self) -> Dict:
         """Market registry status for observability."""

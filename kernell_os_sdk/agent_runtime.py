@@ -55,7 +55,8 @@ from kernell_os_sdk.observability.event_bus import GLOBAL_EVENT_BUS
 # Phase 9: Sully Compute Allocation + Swarm Orchestration
 from kernell_os_sdk.sully.types import TaskFeatures, Tier
 from kernell_os_sdk.sully.engine import SullyEngine
-from kernell_os_sdk.sully.market import ModelMarketRegistry
+from kernell_os_sdk.sully.market import ModelMarketRegistry, GroqMarketProvider, OpenRouterMarketProvider, LocalMarketProvider
+from kernell_os_sdk.sully.training_pipeline import TrainingPipeline
 from kernell_os_sdk.swarm.orchestrator import SwarmOrchestrator
 from kernell_os_sdk.swarm.decomposer import TaskDecomposer
 from kernell_os_sdk.swarm.consensus import ConsensusEngine
@@ -353,7 +354,7 @@ class Agent:
             sully=self._sully,
             market=self._market,
             llm_registry=llm_registry,
-            decomposer=TaskDecomposer(),
+            decomposer=TaskDecomposer(mode="llm", llm_registry=llm_registry),
             consensus=ConsensusEngine(llm_registry=llm_registry),
             max_concurrency=self.config.max_concurrency,
         )
