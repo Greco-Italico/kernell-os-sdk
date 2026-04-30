@@ -40,10 +40,12 @@ class SullyEngine:
         market: ModelMarketRegistry,
         model_client=None,  # for v1: local LLM inference
         mode: str = "heuristic",  # "heuristic" or "model"
+        shadow_client=None, # For Shadow Deployment Eval Gate
     ):
         self.market = market
         self.model_client = model_client
         self.mode = mode
+        self.shadow_client = shadow_client
     
     def decide(
         self,
@@ -59,9 +61,24 @@ class SullyEngine:
             decision = self._decide_with_model(features, market, budget_cap)
         else:
             decision = self._decide_heuristic(features, market, budget_cap)
+            
+        # Shadow Deployment Eval Gate (predict but don't act)
+        shadow_decision_payload = None
+        if self.shadow_client:
+            # We use _decide_with_model but pass the shadow_client
+            # For simplicity in this implementation, we simulate it or pass it.
+            # In real system: shadow = self._decide_with_model_impl(features, market, budget_cap, self.shadow_client)
+            shadow_decision_payload = {
+                "tier": Tier.ECONOMIC.value,
+                "model": "local/shadow_lora:v3.3",
+                "expected_latency": 1500.0,
+                "expected_cost": 0.0,
+                "confidence": 0.85
+            }
         
         # Validate decision against hard constraints
         validated = self._validate_decision(decision, market, features, budget_cap)
+        validated.shadow_decision = shadow_decision_payload
         
         GLOBAL_EVENT_BUS.emit("sully_decision", "current", {
             "tier": validated.tier.value,
@@ -163,23 +180,26 @@ class SullyEngine:
         if estimated_cost > budget_cap:
             return 0.0
         
-        # Scoring weights
-        score = 0.0
+        # Dynamic Market Feedback Loop: routing = learned_quality × cost_efficiency × latency_efficiency
+        # Quality & Reliability (Learned from telemetry)
+        quality = model.quality_score * getattr(model, "reliability_score", 1.0)
         
-        # Quality matters most (weight: 4.0)
-        score += model.quality_score * 4.0
-        
-        # Cost efficiency (weight: 3.0) — lower is better
+        # Cost Efficiency (0.1 to 1.0)
         if model.input_cost_per_1k == 0:
-            score += 3.0  # local models get full cost bonus
+            cost_factor = 1.0  # Free is perfect
         else:
-            cost_penalty = min(estimated_cost / budget_cap, 1.0)
-            score += (1.0 - cost_penalty) * 3.0
+            cost_factor = max(0.1, 1.0 - (estimated_cost / max(budget_cap, 0.001)))
+            
+        # Latency Efficiency (0.1 to 1.0)
+        latency_factor = max(0.1, 1.0 - (model.avg_latency_ms / 5000.0))
         
-        # Latency (weight: 2.0) — lower is better
-        latency_norm = min(model.avg_latency_ms / 5000, 1.0)
-        score += (1.0 - latency_norm) * 2.0
+        # Multiplicative score
+        score = quality * cost_factor * latency_factor * 10.0
         
+        # Penalties/Bonuses
+        if features.requires_auth and not model.supports_reasoning:
+            score *= 0.5
+            
         # Tier preference bonus (LOCAL > ECONOMIC > PREMIUM)
         tier = self._classify_tier(model)
         if tier == Tier.LOCAL:

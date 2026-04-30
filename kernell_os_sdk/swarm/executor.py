@@ -252,6 +252,7 @@ class SwarmExecutor:
                 "model": decision.model_id,
                 "confidence": decision.confidence,
                 "expected_latency": decision.expected_latency,
+                "shadow_decision": decision.shadow_decision,
             },
             "outcome": {
                 "success": outcome.success,

@@ -65,6 +65,7 @@ class ModelMarketInfo:
     
     # 🧪 Quality (populated from telemetry over time)
     quality_score: float = 0.7      # 0.0–1.0 task success rate on this model
+    reliability_score: float = 1.0  # 0.0–1.0 drops when rate limited or failing
 
 
 @dataclass
@@ -77,6 +78,7 @@ class SullyDecision:
     expected_latency: float         # estimated ms
     strategy_hint: str = "auto"     # "dom_first", "vision_first", "hybrid", "auto"
     reasoning: str = ""             # why this decision was made (for telemetry)
+    shadow_decision: Optional[Dict] = None  # Telemetry payload for shadow model vs prod model eval
 
 
 @dataclass

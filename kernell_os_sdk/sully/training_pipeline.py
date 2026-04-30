@@ -180,6 +180,29 @@ class TrainingPipeline:
         }
         
         self._append_jsonl(self.sully_file, instruct_sample)
+        
+        # --- Shadow Deployment Logging ---
+        if decision.get("shadow_decision"):
+            shadow_sample = {
+                "input": features,
+                "prod_decision": {
+                    "tier": decision.get("tier"),
+                    "model": decision.get("model"),
+                    "expected_latency": decision.get("expected_latency")
+                },
+                "shadow_decision": decision.get("shadow_decision"),
+                "prod_outcome": {
+                    "score": score,
+                    "success": outcome.get("success"),
+                    "total_cost": outcome.get("total_cost"),
+                    "total_latency": outcome.get("total_latency"),
+                },
+                "timestamp": time.time(),
+                "trace_id": payload.get("trace_id", ""),
+                "task_id": task_id
+            }
+            shadow_file = os.path.join(self.output_dir, "shadow_eval.jsonl")
+            self._append_jsonl(shadow_file, shadow_sample)
 
     # ── Decomposer Collector ─────────────────────────────────────────
 
