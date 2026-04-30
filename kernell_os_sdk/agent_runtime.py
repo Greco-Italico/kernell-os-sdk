@@ -52,6 +52,14 @@ from kernell_os_sdk.agent_reliability import ReliabilityEngine, FailurePolicy
 from kernell_os_sdk.interaction_router import InteractionRouter
 from kernell_os_sdk.observability.event_bus import GLOBAL_EVENT_BUS
 
+# Phase 9: Sully Compute Allocation + Swarm Orchestration
+from kernell_os_sdk.sully.types import TaskFeatures, Tier
+from kernell_os_sdk.sully.engine import SullyEngine
+from kernell_os_sdk.sully.market import ModelMarketRegistry
+from kernell_os_sdk.swarm.orchestrator import SwarmOrchestrator
+from kernell_os_sdk.swarm.decomposer import TaskDecomposer
+from kernell_os_sdk.swarm.consensus import ConsensusEngine
+
 logger = logging.getLogger("kernell.agent")
 
 
@@ -230,6 +238,11 @@ class AgentConfig:
     planning_role: str = "reasoning"
     enable_code_execution: bool = True
     enable_tools: bool = True
+    # Phase 9: Sully + Swarm configuration
+    enable_swarm: bool = True       # enable autonomous DAG execution
+    default_budget: float = 0.50    # $ budget per task
+    max_concurrency: int = 10       # max parallel agents in swarm
+    complexity_threshold: float = 0.4  # tasks above this use swarm
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -247,6 +260,12 @@ class AgentResult:
     total_tokens: int = 0
     total_duration_ms: float = 0.0
     memory_snapshot: Dict[str, Any] = field(default_factory=dict)
+    # Phase 9: Economic metadata
+    total_cost: float = 0.0
+    tier_used: str = ""
+    execution_mode: str = ""       # "single_shot" or "swarm"
+    subtasks_completed: int = 0
+    consensus_method: str = ""
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -326,15 +345,204 @@ class Agent:
         self.world_model = WorldModelState()
         self._reliability = ReliabilityEngine()
         self._router = interaction_router or InteractionRouter()
+        
+        # Phase 9: Sully + Swarm Orchestration
+        self._market = ModelMarketRegistry()
+        self._sully = SullyEngine(market=self._market, mode="heuristic")
+        self._orchestrator = SwarmOrchestrator(
+            sully=self._sully,
+            market=self._market,
+            llm_registry=llm_registry,
+            decomposer=TaskDecomposer(),
+            consensus=ConsensusEngine(llm_registry=llm_registry),
+            max_concurrency=self.config.max_concurrency,
+        )
 
-    def run(self, goal: str, session_id: Optional[str] = None) -> AgentResult:
+    # ── Phase 9: Complexity Gate ──────────────────────────────────────
+
+    def _assess_complexity(self, goal: str) -> float:
+        """
+        Quick heuristic to estimate task complexity.
+        Determines whether to use single-shot or swarm execution.
+        
+        Returns 0.0 (trivial) to 1.0 (very complex).
+        """
+        score = 0.0
+        goal_lower = goal.lower()
+        
+        # Length-based complexity
+        if len(goal) > 200:
+            score += 0.2
+        if len(goal) > 500:
+            score += 0.1
+        
+        # Multi-step indicators
+        multi_step_keywords = [
+            "and then", "after that", "step 1", "step 2",
+            "first", "second", "third", "finally",
+            "compare", "analyze", "research",
+            "multiple", "several", "all",
+        ]
+        for kw in multi_step_keywords:
+            if kw in goal_lower:
+                score += 0.1
+        
+        # High-quality indicators
+        quality_keywords = ["verify", "validate", "ensure", "critical", "accurate"]
+        for kw in quality_keywords:
+            if kw in goal_lower:
+                score += 0.05
+        
+        # Code generation
+        code_keywords = ["write code", "implement", "build", "create api", "develop"]
+        for kw in code_keywords:
+            if kw in goal_lower:
+                score += 0.15
+        
+        return min(score, 1.0)
+
+    def _infer_task_type(self, goal: str) -> str:
+        """Infer task type from goal text for decomposition template selection."""
+        goal_lower = goal.lower()
+        
+        if any(kw in goal_lower for kw in ["scrape", "extract", "crawl", "parse"]):
+            return "web_scraping"
+        if any(kw in goal_lower for kw in ["code", "implement", "function", "api", "build", "develop"]):
+            return "code_gen"
+        if any(kw in goal_lower for kw in ["research", "compare", "analyze", "investigate"]):
+            return "research"
+        if any(kw in goal_lower for kw in ["classify", "categorize", "label", "detect"]):
+            return "classification"
+        if any(kw in goal_lower for kw in ["data", "extract", "json", "csv", "table"]):
+            return "data_extraction"
+        if any(kw in goal_lower for kw in ["click", "navigate", "login", "fill", "submit"]):
+            return "web_automation"
+        
+        return "research"  # safe default
+
+    def run(self, goal: str, session_id: Optional[str] = None, budget: Optional[float] = None) -> AgentResult:
         """
         Execute the agent loop for a given goal.
+        
+        Phase 9 Complexity Gate:
+          - Simple tasks (complexity < threshold) → direct single-shot execution
+          - Complex tasks → Sully + Swarm DAG pipeline
+        
         If session_id is provided and a checkpoint exists, the agent will resume from it.
-        Loop: plan → execute → observe → refine → repeat until answer or max_steps.
         """
         t0 = time.time()
         
+        # Phase 9: Complexity Gate — decide execution mode
+        complexity = self._assess_complexity(goal)
+        use_swarm = (
+            self.config.enable_swarm
+            and complexity >= self.config.complexity_threshold
+        )
+        
+        if use_swarm:
+            GLOBAL_EVENT_BUS.emit("agent_mode_selected", session_id or "unknown", {
+                "mode": "swarm",
+                "complexity": complexity,
+                "threshold": self.config.complexity_threshold,
+            })
+            return self._run_swarm(
+                goal, budget=budget or self.config.default_budget, t0=t0
+            )
+        
+        GLOBAL_EVENT_BUS.emit("agent_mode_selected", session_id or "unknown", {
+            "mode": "single_shot",
+            "complexity": complexity,
+            "threshold": self.config.complexity_threshold,
+        })
+        return self._run_single_shot(goal, session_id, t0)
+
+    # ── Phase 9: Swarm Execution Path ────────────────────────────────
+
+    def _run_swarm(self, goal: str, budget: float, t0: float) -> AgentResult:
+        """
+        Execute task through the full Sully + Swarm + Consensus pipeline.
+        Used for complex, multi-step, or high-quality tasks.
+        """
+        import asyncio
+
+        task_type = self._infer_task_type(goal)
+        complexity = self._assess_complexity(goal)
+
+        features = TaskFeatures(
+            task_type=task_type,
+            ui_complexity=complexity,
+            estimated_tokens=self.config.max_think_tokens,
+            estimated_output_tokens=self.config.max_code_tokens,
+            quality_requirement=min(0.6 + complexity * 0.3, 0.95),
+            expected_output_type="code" if task_type == "code_gen" else "text",
+        )
+
+        logger.info(
+            f"[Agent] SWARM mode: type={task_type}, complexity={complexity:.2f}, "
+            f"budget=${budget:.2f}"
+        )
+
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # Already in async context — use nest_asyncio pattern
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    orch_result = pool.submit(
+                        asyncio.run,
+                        self._orchestrator.execute(goal, features, budget)
+                    ).result()
+            else:
+                orch_result = asyncio.run(
+                    self._orchestrator.execute(goal, features, budget)
+                )
+        except RuntimeError:
+            # No event loop exists
+            orch_result = asyncio.run(
+                self._orchestrator.execute(goal, features, budget)
+            )
+
+        elapsed = round((time.time() - t0) * 1000, 1)
+
+        result = AgentResult(
+            goal=goal,
+            final_answer=orch_result.output,
+            success=orch_result.success,
+            steps_taken=orch_result.subtasks_total,
+            total_duration_ms=elapsed,
+            memory_snapshot=self.memory.dump(),
+            # Phase 9: Economic metadata
+            total_cost=orch_result.total_cost,
+            tier_used=f"swarm_{orch_result.waves_executed}w",
+            execution_mode="swarm",
+            subtasks_completed=orch_result.subtasks_succeeded,
+            consensus_method=orch_result.consensus_method,
+        )
+
+        logger.info(
+            f"[Agent] SWARM complete: {orch_result.subtasks_succeeded}/{orch_result.subtasks_total} "
+            f"subtasks, {orch_result.waves_executed} waves, ${orch_result.total_cost:.4f}, "
+            f"{elapsed}ms, consensus={orch_result.consensus_method}"
+        )
+
+        GLOBAL_EVENT_BUS.emit("agent_completed", orch_result.trace_id, {
+            "mode": "swarm",
+            "success": result.success,
+            "subtasks": f"{orch_result.subtasks_succeeded}/{orch_result.subtasks_total}",
+            "cost": orch_result.total_cost,
+            "consensus": orch_result.consensus_method,
+            "latency_ms": elapsed,
+        })
+
+        return result
+
+    # ── Single-Shot Execution Path (original loop) ───────────────────
+
+    def _run_single_shot(self, goal: str, session_id: Optional[str], t0: float) -> AgentResult:
+        """
+        Execute task through the original plan-act-observe loop.
+        Used for simple, single-step tasks where swarm overhead is unnecessary.
+        """
         # ── Phase 5.5: Task Recovery ──────────────────────────────
         session_id = session_id or str(uuid.uuid4())
         start_step = 0
@@ -361,10 +569,11 @@ class Agent:
                     logger.warning(f"[Agent] Session {session_id} is already {checkpoint.status.value}")
                     return AgentResult(
                         goal=goal, success=(checkpoint.status == TaskStatus.COMPLETED),
-                        steps_taken=start_step, memory_snapshot=self.memory.dump()
+                        steps_taken=start_step, memory_snapshot=self.memory.dump(),
+                        execution_mode="single_shot",
                     )
 
-        result = AgentResult(goal=goal)
+        result = AgentResult(goal=goal, execution_mode="single_shot")
         logger.info(f"[Agent] Starting/Resuming: {goal[:100]} (session: {session_id})")
         GLOBAL_EVENT_BUS.emit("agent_started", session_id, {"goal": goal, "session_id": session_id})
 
