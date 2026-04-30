@@ -49,6 +49,7 @@ from kernell_os_sdk.agent_persistence import (
 from kernell_os_sdk.agent_validation import ToolValidator
 from kernell_os_sdk.agent_world_model import WorldModelState, WorldModelUpdater
 from kernell_os_sdk.agent_reliability import ReliabilityEngine, FailurePolicy
+from kernell_os_sdk.interaction_router import InteractionRouter
 
 logger = logging.getLogger("kernell.agent")
 
@@ -178,7 +179,8 @@ class ToolRegistry:
 class ActionType(str, Enum):
     THINK = "think"       # Pure reasoning, no side effects
     CODE = "code"         # Generate and execute code
-    TOOL = "tool"         # Call a registered tool
+    TOOL = "tool"         # Call a registered tool directly
+    UI_INTERACT = "ui_interact" # Abstract UI interaction (routed dynamically)
     ANSWER = "answer"     # Final answer to the user
     MEMORY = "memory"     # Store/recall from memory
 
@@ -195,6 +197,10 @@ class StepPlan:
     memory_key: str = ""
     memory_value: Any = None
     expected_outcome: str = ""
+    # Phase 7c: Abstract UI intent
+    intent: str = ""
+    target: str = ""
+    text: str = ""
 
 
 @dataclass
@@ -252,16 +258,20 @@ You MUST respond with valid JSON only. No markdown, no explanation outside JSON.
 
 Action types:
 - "think": Reason about the problem (no side effects). Use this to analyze before acting.
+- "ui_interact": Interact with a UI element abstractly. The system will route this to DOM or OS Vision automatically.
 - "code": Generate Python code to execute. Specify the task description.
-- "tool": Call a registered tool by name with arguments.
+- "tool": Call a registered tool by name with arguments (for non-UI tools).
 - "answer": Provide the final answer. Use this when the goal is achieved.
 - "memory": Store a value for later use.
 
 Response format:
 {
-  "action": "think|code|tool|answer|memory",
+  "action": "think|ui_interact|code|tool|answer|memory",
   "reasoning": "why this action",
   "description": "what this step does",
+  "intent": "click|type|read (if action=ui_interact)",
+  "target": "visual label or DOM element description (if action=ui_interact)",
+  "text": "text to type (if action=ui_interact and intent=type)",
   "tool_name": "name (if action=tool)",
   "tool_args": {"key": "value"} (if action=tool),
   "code_task": "task description (if action=code)",
@@ -300,6 +310,7 @@ class Agent:
         verifier=None,
         execution_gate=None,
         checkpoint_manager: Optional[CheckpointManager] = None,
+        interaction_router: Optional[InteractionRouter] = None,
     ):
         self._registry = llm_registry
         self.memory = memory or MemoryStore()
@@ -313,6 +324,7 @@ class Agent:
         self._world_updater = WorldModelUpdater(llm_registry)
         self.world_model = WorldModelState()
         self._reliability = ReliabilityEngine()
+        self._router = interaction_router or InteractionRouter()
 
     def run(self, goal: str, session_id: Optional[str] = None) -> AgentResult:
         """
@@ -526,6 +538,9 @@ class Agent:
             memory_key=data.get("memory_key", ""),
             memory_value=data.get("memory_value"),
             expected_outcome=data.get("expected_outcome", ""),
+            intent=data.get("intent", ""),
+            target=data.get("target", ""),
+            text=data.get("text", ""),
         )
 
     # ── Step Execution ───────────────────────────────────────────────
@@ -543,6 +558,9 @@ class Agent:
 
         elif plan.action == ActionType.TOOL:
             return self._execute_tool(step_idx, plan)
+            
+        elif plan.action == ActionType.UI_INTERACT:
+            return self._execute_ui_interact(step_idx, plan)
 
         elif plan.action == ActionType.CODE:
             return self._execute_code(step_idx, plan)
@@ -569,6 +587,29 @@ class Agent:
             step_idx=step_idx, action=plan.action, success=False,
             error=f"Unknown action: {plan.action}",
         )
+
+    def _execute_ui_interact(self, step_idx: int, plan: StepPlan) -> StepResult:
+        """Phase 7c: Route abstract UI interaction to concrete tool."""
+        t0 = time.time()
+        
+        route = self._router.route(plan.intent, plan.target, plan.text, self.world_model)
+        
+        if route.confidence < 0.6:
+            return StepResult(
+                step_idx=step_idx, action=ActionType.UI_INTERACT, success=False, is_valid=False,
+                error=f"Cannot confidently route interaction for '{plan.target}'. Confidence: {route.confidence}. Reason: {route.reasoning}. Please replan or explore the screen.",
+                duration_ms=round((time.time() - t0) * 1000, 1),
+            )
+            
+        # Modify the plan to match the routed tool, then delegate to _execute_tool
+        plan.tool_name = route.tool_name
+        plan.tool_args = route.args
+        
+        res = self._execute_tool(step_idx, plan)
+        # Override the action type back to UI_INTERACT for logging
+        res.action = ActionType.UI_INTERACT
+        res.output = f"[Routed via {route.tool_name} (conf: {route.confidence})]\n" + res.output
+        return res
 
     def _execute_tool(self, step_idx: int, plan: StepPlan) -> StepResult:
         """Execute a tool call."""
