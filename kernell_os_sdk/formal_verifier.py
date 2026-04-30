@@ -73,9 +73,11 @@ _DANGEROUS_CALLS = {
     # Shell execution
     r"os\.system\s*\(":             ("CRITICAL", "os.system() — arbitrary shell execution"),
     r"os\.popen\s*\(":              ("CRITICAL", "os.popen() — shell execution with pipe"),
+    r"os\.exec[lv]p?e?\s*\(":       ("CRITICAL", "os.exec*() — process replacement"),
     r"subprocess\.call\(.*shell\s*=\s*True": ("CRITICAL", "subprocess.call with shell=True"),
     r"subprocess\.Popen\(.*shell\s*=\s*True": ("CRITICAL", "subprocess.Popen with shell=True"),
     r"subprocess\.run\(.*shell\s*=\s*True": ("CRITICAL", "subprocess.run with shell=True"),
+    r"subprocess\.(?:call|run|Popen|check_output)\s*\(": ("HIGH", "subprocess usage detected"),
 
     # File destruction
     r"shutil\.rmtree\s*\(":         ("HIGH", "shutil.rmtree() — recursive directory deletion"),
@@ -83,8 +85,14 @@ _DANGEROUS_CALLS = {
     r"os\.unlink\s*\(":             ("MEDIUM", "os.unlink() — file deletion"),
     r"pathlib\.Path.*\.unlink":     ("MEDIUM", "Path.unlink() — file deletion"),
 
-    # Network
+    # Network — expanded for Phase 4
     r"socket\.socket\s*\(":         ("HIGH", "Direct socket creation"),
+    r"requests\.(?:get|post|put|delete|patch|head)\s*\(": ("HIGH", "HTTP request via requests library"),
+    r"urllib\.request\.urlopen\s*\(": ("HIGH", "HTTP request via urllib"),
+    r"urllib\.request\.Request\s*\(": ("HIGH", "HTTP request construction via urllib"),
+    r"http\.client\.HTTP": ("HIGH", "HTTP connection via http.client"),
+    r"httpx\.(?:get|post|Client)":  ("HIGH", "HTTP request via httpx"),
+    r"aiohttp\.ClientSession":      ("HIGH", "Async HTTP session via aiohttp"),
 
     # Code execution
     r"(?<!\w)exec\s*\(":            ("CRITICAL", "exec() — arbitrary code execution"),
@@ -95,19 +103,35 @@ _DANGEROUS_CALLS = {
     r"os\.fork\s*\(":               ("CRITICAL", "os.fork() — process forking (fork bomb risk)"),
     r"os\.kill\s*\(":               ("HIGH", "os.kill() — process killing"),
     r"signal\.signal\s*\(":         ("MEDIUM", "signal.signal() — signal handler modification"),
+
+    # Environment / secrets access
+    r"os\.environ":                 ("HIGH", "os.environ — environment variable access"),
+    r"os\.getenv\s*\(":             ("HIGH", "os.getenv() — environment variable access"),
 }
 
 _DANGEROUS_IMPORTS = {
-    "ctypes":     ("HIGH", "ctypes — direct memory access"),
-    "pickle":     ("MEDIUM", "pickle — deserialization vulnerability"),
-    "marshal":    ("HIGH", "marshal — low-level serialization"),
-    "importlib":  ("MEDIUM", "importlib — dynamic import manipulation"),
+    "ctypes":      ("HIGH", "ctypes — direct memory access"),
+    "pickle":      ("MEDIUM", "pickle — deserialization vulnerability"),
+    "marshal":     ("HIGH", "marshal — low-level serialization"),
+    "importlib":   ("MEDIUM", "importlib — dynamic import manipulation"),
+    "requests":    ("HIGH", "requests — network access"),
+    "httpx":       ("HIGH", "httpx — network access"),
+    "aiohttp":     ("HIGH", "aiohttp — async network access"),
+    "paramiko":    ("CRITICAL", "paramiko — SSH connections"),
+    "ftplib":      ("HIGH", "ftplib — FTP connections"),
+    "smtplib":     ("HIGH", "smtplib — email sending"),
+    "telnetlib":   ("HIGH", "telnetlib — telnet connections"),
+    "webbrowser":  ("MEDIUM", "webbrowser — browser opening"),
 }
 
 _RESOURCE_PATTERNS = {
     r"while\s+True\s*:(?!\s*#.*break)":  ("HIGH", "Unbounded while True loop (no visible break)"),
     r"while\s+1\s*:":                     ("HIGH", "Unbounded while 1 loop"),
     r"recursion_limit":                   ("MEDIUM", "Attempting to modify recursion limit"),
+    r"range\s*\(\s*10\s*\*\*\s*[7-9]\b":  ("HIGH", "Extremely large range (10^7+) — CPU bomb"),
+    r"range\s*\(\s*10\s*\*\*\s*\d{2,}":   ("CRITICAL", "Astronomical range (10^10+) — CPU bomb"),
+    r"\*\s*10\s*\*\*\s*[89]":             ("HIGH", "Large exponential operation — memory bomb"),
+    r"""b?['"].*['"]\s*\*\s*\d{6,}""":    ("HIGH", "String/bytes multiplication bomb"),
 }
 
 
@@ -145,27 +169,38 @@ class FormalVerifier:
         violations: List[Violation] = []
         checks = 0
 
+        # Phase 4: Normalize/deobfuscate before analysis
+        normalized = self._normalize(code)
+
         # Check 1: Forbidden operations (regex-based)
         checks += 1
-        violations.extend(self._check_dangerous_calls(code))
+        violations.extend(self._check_dangerous_calls(normalized))
 
         # Check 2: Forbidden imports
         checks += 1
-        violations.extend(self._check_dangerous_imports(code))
+        violations.extend(self._check_dangerous_imports(normalized))
 
         # Check 3: File path safety
         checks += 1
-        violations.extend(self._check_file_paths(code))
+        violations.extend(self._check_file_paths(normalized))
 
         # Check 4: Resource bounds
         checks += 1
-        violations.extend(self._check_resource_bounds(code))
+        violations.extend(self._check_resource_bounds(normalized))
 
         # Check 5: AST-based analysis (deeper than regex)
         checks += 1
-        violations.extend(self._check_ast(code))
+        violations.extend(self._check_ast(code))  # Use original for valid AST
 
-        # Check 6: Custom invariants
+        # Check 6: Obfuscation detection (Phase 4)
+        checks += 1
+        violations.extend(self._check_obfuscation(code))
+
+        # Check 7: Data exfiltration patterns (Phase 4)
+        checks += 1
+        violations.extend(self._check_exfiltration(normalized))
+
+        # Check 8: Custom invariants
         for invariant in self._custom_invariants:
             checks += 1
             try:
@@ -291,13 +326,12 @@ class FormalVerifier:
         try:
             tree = ast.parse(code)
         except SyntaxError:
-            # Can't parse — not necessarily a violation, could be a snippet
             return violations
 
         for node in ast.walk(tree):
-            # Check for __import__ calls (bypass normal import)
             if isinstance(node, ast.Call):
                 func = node.func
+                # __import__() direct
                 if isinstance(func, ast.Name) and func.id == "__import__":
                     violations.append(Violation(
                         check="FORBIDDEN_OPERATIONS",
@@ -305,18 +339,39 @@ class FormalVerifier:
                         message="__import__() — dynamic import bypass",
                         line=getattr(node, "lineno", None),
                     ))
-                # Check for getattr on sensitive modules
+
+                # getattr(__import__("os"), "system") — Phase 4 obfuscation detection
+                if isinstance(func, ast.Name) and func.id == "getattr":
+                    if node.args and isinstance(node.args[0], ast.Call):
+                        inner = node.args[0]
+                        if isinstance(inner.func, ast.Name) and inner.func.id == "__import__":
+                            violations.append(Violation(
+                                check="OBFUSCATION",
+                                severity="CRITICAL",
+                                message="getattr(__import__()) — obfuscated dynamic import + attribute access",
+                                line=getattr(node, "lineno", None),
+                            ))
+
+                # os.system(), os.popen(), etc.
                 if isinstance(func, ast.Attribute):
                     if isinstance(func.value, ast.Name):
-                        if func.value.id == "os" and func.attr in ("system", "popen", "exec", "execvp"):
+                        if func.value.id == "os" and func.attr in ("system", "popen", "exec", "execvp", "execl", "execlp"):
                             violations.append(Violation(
                                 check="FORBIDDEN_OPERATIONS",
                                 severity="CRITICAL",
                                 message=f"os.{func.attr}() detected via AST",
                                 line=getattr(node, "lineno", None),
                             ))
+                        # subprocess.* without shell=True (still caught)
+                        if func.value.id == "subprocess" and func.attr in ("call", "run", "Popen", "check_output", "check_call"):
+                            violations.append(Violation(
+                                check="FORBIDDEN_OPERATIONS",
+                                severity="HIGH",
+                                message=f"subprocess.{func.attr}() detected via AST",
+                                line=getattr(node, "lineno", None),
+                            ))
 
-            # Check for deeply nested functions (potential obfuscation)
+            # Tail recursion detection (Phase 4)
             if isinstance(node, ast.FunctionDef):
                 depth = self._get_nesting_depth(node)
                 if depth > 5:
@@ -324,6 +379,14 @@ class FormalVerifier:
                         check="RESOURCE_BOUNDS",
                         severity="MEDIUM",
                         message=f"Deeply nested function ({depth} levels) — potential obfuscation",
+                        line=getattr(node, "lineno", None),
+                    ))
+                # Detect self-calling functions without base case guard
+                if self._is_unguarded_recursion(node):
+                    violations.append(Violation(
+                        check="RESOURCE_BOUNDS",
+                        severity="HIGH",
+                        message=f"Function '{node.name}' appears to recurse without base case",
                         line=getattr(node, "lineno", None),
                     ))
 
@@ -337,3 +400,126 @@ class FormalVerifier:
                 child_depth = FormalVerifier._get_nesting_depth(child, depth + 1)
                 max_depth = max(max_depth, child_depth)
         return max_depth
+
+    @staticmethod
+    def _is_unguarded_recursion(func_node: ast.FunctionDef) -> bool:
+        """Detect functions that call themselves without an if/return guard."""
+        fname = func_node.name
+        has_self_call = False
+        has_base_case = False
+        for node in ast.walk(func_node):
+            # Check for self-call
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id == fname:
+                    has_self_call = True
+            # Check for if+return pattern (base case)
+            if isinstance(node, ast.If):
+                for child in ast.walk(node):
+                    if isinstance(child, ast.Return):
+                        has_base_case = True
+                        break
+        return has_self_call and not has_base_case
+
+    # ── Phase 4: Deobfuscation ───────────────────────────────────────
+
+    @staticmethod
+    def _normalize(code: str) -> str:
+        """Light deobfuscation: resolve simple string-building patterns."""
+        # Collapse line continuations
+        normalized = code.replace("\\\n", "")
+        # Collapse string concatenation: "o" + "s" → "os"
+        normalized = re.sub(r'"([^"]{1,3})"\s*\+\s*"([^"]{1,3})"', r'"\1\2"', normalized)
+        normalized = re.sub(r"'([^']{1,3})'\s*\+\s*'([^']{1,3})'", r"'\1\2'", normalized)
+        return normalized
+
+    # ── Phase 4: Obfuscation Detection ───────────────────────────────
+
+    def _check_obfuscation(self, code: str) -> List[Violation]:
+        """Detect common obfuscation patterns used to bypass static analysis."""
+        violations = []
+        lines = code.split("\n")
+
+        obfuscation_patterns = {
+            # getattr + __import__ combo (the classic bypass)
+            r'getattr\s*\(\s*__import__':   ("CRITICAL", "getattr(__import__()) — obfuscated module access"),
+            # chr() string building
+            r'chr\s*\(\s*\d+\s*\)\s*\+\s*chr': ("HIGH", "chr() string building — potential code obfuscation"),
+            # eval/exec of joined strings
+            r'(?:eval|exec)\s*\(.*\.join':  ("CRITICAL", "eval/exec of joined strings — code assembly"),
+            r'(?:eval|exec)\s*\(.*chr\(':   ("CRITICAL", "eval/exec with chr() — encoded payload"),
+            # Attribute access via strings
+            r'getattr\s*\(.*,\s*["\'](?:system|popen|exec|fork|kill)["\']': ("CRITICAL", "getattr() accessing dangerous method by string"),
+            # Base64 encoded payloads executed
+            r'(?:eval|exec)\s*\(.*b64decode': ("CRITICAL", "Execution of base64-decoded payload"),
+            r'(?:eval|exec)\s*\(.*decode\(':  ("HIGH", "Execution of decoded payload"),
+        }
+
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            for pattern, (severity, msg) in obfuscation_patterns.items():
+                if re.search(pattern, line):
+                    violations.append(Violation(
+                        check="OBFUSCATION",
+                        severity=severity,
+                        message=msg,
+                        line=i,
+                        evidence=stripped[:100],
+                    ))
+
+        return violations
+
+    # ── Phase 4: Data Exfiltration Detection ─────────────────────────
+
+    def _check_exfiltration(self, code: str) -> List[Violation]:
+        """Detect patterns that could leak sensitive data."""
+        violations = []
+        lines = code.split("\n")
+
+        # Sensitive files
+        sensitive_files = {
+            "/etc/passwd", "/etc/shadow", "/etc/hosts",
+            ".env", ".git/config", ".ssh/",
+            "id_rsa", "id_ed25519", ".aws/credentials",
+            ".kube/config", ".docker/config.json",
+        }
+
+        for i, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+
+            # Check for reads of sensitive files
+            if "open(" in line or "read_text(" in line or "read_bytes(" in line:
+                for sf in sensitive_files:
+                    if sf in line:
+                        violations.append(Violation(
+                            check="DATA_EXFILTRATION",
+                            severity="CRITICAL",
+                            message=f"Attempting to read sensitive file: {sf}",
+                            line=i,
+                            evidence=stripped[:100],
+                        ))
+
+            # print(open(...).read()) — classic exfiltration
+            if re.search(r'print\s*\(\s*open\s*\(', line):
+                violations.append(Violation(
+                    check="DATA_EXFILTRATION",
+                    severity="HIGH",
+                    message="print(open()) — data exfiltration via stdout",
+                    line=i,
+                    evidence=stripped[:100],
+                ))
+
+            # Sending env vars over network
+            if "os.environ" in line and any(net in line for net in ["requests.", "urllib.", "http.", "socket."]):
+                violations.append(Violation(
+                    check="DATA_EXFILTRATION",
+                    severity="CRITICAL",
+                    message="Environment variables sent over network",
+                    line=i,
+                    evidence=stripped[:100],
+                ))
+
+        return violations
