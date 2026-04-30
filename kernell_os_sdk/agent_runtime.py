@@ -41,6 +41,11 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set, Union
+import uuid
+
+from kernell_os_sdk.agent_persistence import (
+    CheckpointManager, AgentStateSnapshot, TaskStatus
+)
 
 logger = logging.getLogger("kernell.agent")
 
@@ -288,6 +293,7 @@ class Agent:
         code_pipeline=None,
         verifier=None,
         execution_gate=None,
+        checkpoint_manager: Optional[CheckpointManager] = None,
     ):
         self._registry = llm_registry
         self.memory = memory or MemoryStore()
@@ -296,25 +302,51 @@ class Agent:
         self._pipeline = code_pipeline
         self._verifier = verifier
         self._gate = execution_gate
+        self._checkpoint_manager = checkpoint_manager
 
-    def run(self, goal: str) -> AgentResult:
+    def run(self, goal: str, session_id: Optional[str] = None) -> AgentResult:
         """
         Execute the agent loop for a given goal.
-
-        Loop: plan → execute → observe → repeat until answer or max_steps.
+        If session_id is provided and a checkpoint exists, the agent will resume from it.
+        Loop: plan → execute → observe → refine → repeat until answer or max_steps.
         """
         t0 = time.time()
-        result = AgentResult(goal=goal)
+        
+        # ── Phase 5.5: Task Recovery ──────────────────────────────
+        session_id = session_id or str(uuid.uuid4())
+        start_step = 0
         step_history: List[Dict] = []
+        
+        if self._checkpoint_manager:
+            checkpoint = self._checkpoint_manager.load_checkpoint(session_id)
+            if checkpoint:
+                logger.info(f"[Agent] Resuming session {session_id} from step {checkpoint.current_step}")
+                goal = checkpoint.goal  # Ensure goal matches
+                start_step = checkpoint.current_step
+                step_history = checkpoint.history
+                
+                # Restore memory
+                self.memory.clear()
+                for k, v in checkpoint.memory_dump.items():
+                    self.memory.remember(k, v, source="checkpoint")
+                    
+                if checkpoint.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                    logger.warning(f"[Agent] Session {session_id} is already {checkpoint.status.value}")
+                    return AgentResult(
+                        goal=goal, success=(checkpoint.status == TaskStatus.COMPLETED),
+                        steps_taken=start_step, memory_snapshot=self.memory.dump()
+                    )
 
-        logger.info(f"[Agent] Starting: {goal[:100]}")
+        result = AgentResult(goal=goal)
+        logger.info(f"[Agent] Starting/Resuming: {goal[:100]} (session: {session_id})")
 
-        for step_idx in range(self.config.max_steps):
+        for step_idx in range(start_step, self.config.max_steps):
             # ── Plan next action ─────────────────────────────────
             plan = self._plan_next(goal, step_history)
 
             if plan is None:
                 result.final_answer = "Planning failed — could not determine next action"
+                self._save_checkpoint(session_id, goal, step_idx, step_history, TaskStatus.FAILED)
                 break
 
             # ── Execute the action ───────────────────────────────
@@ -336,20 +368,26 @@ class Agent:
             if plan.action == ActionType.ANSWER:
                 result.final_answer = plan.answer or step_result.output
                 result.success = True
+                self._save_checkpoint(session_id, goal, step_idx + 1, step_history, TaskStatus.COMPLETED)
                 break
 
             # ── Safety: detect spinning ──────────────────────────
-            if step_idx >= 3:
+            if len(step_history) >= 3:
                 last_actions = [h["action"] for h in step_history[-3:]]
                 if len(set(last_actions)) == 1 and last_actions[0] == "think":
                     logger.warning("[Agent] Detected thinking loop — forcing answer")
                     result.final_answer = self._force_answer(goal, step_history)
                     result.success = True
+                    self._save_checkpoint(session_id, goal, step_idx + 1, step_history, TaskStatus.COMPLETED)
                     break
+                    
+            # ── Phase 5.5: Save state after step ─────────────────
+            self._save_checkpoint(session_id, goal, step_idx + 1, step_history, TaskStatus.RUNNING)
 
         if not result.final_answer and step_history:
             result.final_answer = self._force_answer(goal, step_history)
             result.success = True
+            self._save_checkpoint(session_id, goal, self.config.max_steps, step_history, TaskStatus.COMPLETED)
 
         result.total_duration_ms = round((time.time() - t0) * 1000, 1)
         result.memory_snapshot = self.memory.dump()
@@ -609,3 +647,22 @@ class Agent:
             max_tokens=2048,
         )
         return resp.content if resp else "Unable to produce answer"
+
+    # ── Persistence ──────────────────────────────────────────────────
+
+    def _save_checkpoint(self, session_id: str, goal: str, step: int, history: List[Dict], status: TaskStatus):
+        """Save the agent's current state if checkpoint manager is enabled."""
+        if not self._checkpoint_manager:
+            return
+            
+        state = AgentStateSnapshot(
+            session_id=session_id,
+            goal=goal,
+            status=status,
+            current_step=step,
+            memory_dump=self.memory.dump(),
+            history=history,
+            created_at=time.time(),
+            updated_at=time.time(),
+        )
+        self._checkpoint_manager.save_checkpoint(state)
