@@ -48,6 +48,9 @@ class DataGuardrail:
             else:
                 logger.warning("[Guardrail] STRICT=0, allowing small dataset for testing.")
             
+        strict_mode = os.environ.get("GUARDRAIL_STRICT", "1") == "1"
+        self.strict_mode = strict_mode
+        
         results = {
             "balance": self._check_class_balance(samples),
             "reward": self._check_reward_sanity(samples),
@@ -88,11 +91,19 @@ class DataGuardrail:
         
         entropy = -sum(p * math.log(p + 1e-9) for p in probs)
         max_class_ratio = max(probs)
+        min_samples = min(counts.values())
+        
+        # Guardrail rules
+        entropy_pass = entropy >= 0.5  # Requires reasonable diversity
+        min_samples_pass = min_samples >= 20 if self.strict_mode else min_samples >= 2
+        
+        passed = (max_class_ratio <= threshold) and entropy_pass and min_samples_pass
         
         return {
-            "pass": max_class_ratio <= threshold,
+            "pass": passed,
             "max_ratio": max_class_ratio,
             "entropy": entropy,
+            "min_samples_per_tier": min_samples,
             "distribution": dict(counts)
         }
 
@@ -121,19 +132,19 @@ class DataGuardrail:
         # Soft fail / warning if mean is heavily skewed
         skew_warning = abs(mean) > 2.0
         
-        # Clipping warning
+        # Clipping check: if > 80% of samples are highly clipped, gradient is zero
         clipped = sum(1 for r in rewards if abs(r) > 0.95) / len(rewards) if rewards else 0.0
-        clipping_warning = clipped > 0.8
+        clipping_pass = clipped <= 0.8
         
         return {
-            "pass": variance_pass and not (clipping_warning and strict_mode),
+            "pass": variance_pass and clipping_pass,
             "mean": mean,
             "std": std,
             "min": min_r,
             "max": max_r,
             "skew_warning": skew_warning,
             "low_variance_warning": not variance_pass,
-            "clipping_warning": clipping_warning
+            "clipping_warning": not clipping_pass
         }
 
     def _check_leakage(self, samples: List[dict]) -> dict:
