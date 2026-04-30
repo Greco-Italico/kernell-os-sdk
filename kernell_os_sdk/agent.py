@@ -25,7 +25,7 @@ from .health import SLOMonitor
 from .constants import VALID_PERMISSIONS
 from .llm import BaseLLMProvider, LLMMessage
 from .policy_engine import PolicyEngine, AgentCapabilities
-from .security.cognitive_firewall import CognitiveSecurityLayer
+from .security.loader import load_security_layer
 from .risk_engine import RiskEngine, ExecutionContext, ActionTag, DataSensitivity
 from .execution_gate import ExecutionGate, ApprovalSignature
 from .security.rate_limiter import RateLimitGovernor, RateLimitExceeded
@@ -150,8 +150,12 @@ class Agent:
         self.permissions = permissions or AgentPermissions()
         self.sandbox = Sandbox(self.id, self.limits, self.permissions)
 
-        # CognitiveSecurityLayer (MUST init before adapters — Contract v1.0)
-        self.csl = CognitiveSecurityLayer()
+        # Dynamic Security Layer (Open-Core approach)
+        self.csl, self.security_mode = load_security_layer(
+            shadow_mode=self.config.shadow_mode if hasattr(self.config, 'shadow_mode') else False
+        )
+        if self.security_mode == "baseline":
+            logger.warning("adaptive_shield_missing", message="Running without Adaptive Shield — reduced security")
 
         # Capability Layer (Adapters) — sandbox is now guaranteed to exist
         # All adapters receive the CognitiveSecurityLayer (Adapter Security Contract v1.0)
