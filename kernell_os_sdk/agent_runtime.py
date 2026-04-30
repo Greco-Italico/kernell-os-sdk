@@ -48,6 +48,7 @@ from kernell_os_sdk.agent_persistence import (
 )
 from kernell_os_sdk.agent_validation import ToolValidator
 from kernell_os_sdk.agent_world_model import WorldModelState, WorldModelUpdater
+from kernell_os_sdk.agent_reliability import ReliabilityEngine, FailurePolicy
 
 logger = logging.getLogger("kernell.agent")
 
@@ -205,6 +206,7 @@ class StepResult:
     output: str = ""
     error: str = ""
     duration_ms: float = 0.0
+    is_valid: bool = True
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -310,6 +312,7 @@ class Agent:
         self._validator = ToolValidator(llm_registry)
         self._world_updater = WorldModelUpdater(llm_registry)
         self.world_model = WorldModelState()
+        self._reliability = ReliabilityEngine()
 
     def run(self, goal: str, session_id: Optional[str] = None) -> AgentResult:
         """
@@ -360,19 +363,40 @@ class Agent:
                 self._save_checkpoint(session_id, goal, step_idx, step_history, TaskStatus.FAILED)
                 break
 
-            # ── Execute the action ───────────────────────────────
-            step_result = self._execute_step(step_idx, plan)
+            # ── Phase 6.5: Evaluate Plan Viability ───────────────
+            action_key = plan.tool_name or plan.code_task or plan.action.value
+            if not self._reliability.evaluate_plan(action_key):
+                step_result = StepResult(
+                    step_idx=step_idx, action=plan.action, success=False, is_valid=False,
+                    error=f"[SYSTEM] Tool '{action_key}' is blocked due to consecutive failures. You MUST change your strategy or tool."
+                )
+            else:
+                # ── Execute the action ───────────────────────────────
+                step_result = self._execute_step(step_idx, plan)
+                
             result.step_results.append(step_result)
             result.steps_taken = step_idx + 1
+
+            # ── Phase 6.5: Record Success/Failure & Protect State 
+            is_successful = step_result.success and step_result.is_valid
+            
+            if is_successful:
+                self._reliability.record_success(action_key)
+            else:
+                directive = self._reliability.record_failure(action_key)
+                if directive == "abort":
+                    result.final_answer = f"Agent aborted due to repeated failures. Last error: {step_result.error or step_result.output}"
+                    self._save_checkpoint(session_id, goal, step_idx + 1, step_history, TaskStatus.FAILED)
+                    break
 
             # Record in history for next planning iteration
             step_history.append({
                 "step": step_idx,
                 "action": plan.action.value,
                 "description": plan.description,
-                "output": step_result.output[:500],
+                "output": step_result.output[:500] if is_successful else step_result.error or step_result.output[:500],
                 "success": step_result.success,
-                "error": step_result.error,
+                "is_valid": step_result.is_valid,
             })
 
             # ── Check for completion ─────────────────────────────
@@ -383,8 +407,8 @@ class Agent:
                 break
                 
             # ── Phase 5.7: Update World Model ────────────────────
-            # We don't update beliefs on purely internal "think" or "memory" actions
-            if plan.action in (ActionType.TOOL, ActionType.CODE):
+            # Phase 6.5: ONLY update world model if the action was successful and valid!
+            if is_successful and plan.action in (ActionType.TOOL, ActionType.CODE):
                 self.world_model = self._world_updater.update_beliefs(
                     self.world_model,
                     action=f"{plan.action.value} -> {plan.tool_name or plan.code_task}",
@@ -561,11 +585,13 @@ class Agent:
         try:
             output = tool(**plan.tool_args)
             output_str = str(output)[:5000]
+            is_valid = True
             
             # Phase 5.6: Validate expectation
             if plan.expected_outcome:
                 val_result = self._validator.validate(plan.expected_outcome, output_str)
                 if not val_result.is_valid:
+                    is_valid = False
                     output_str += f"\n\n[VALIDATION FAILED] The expectation was NOT met: {val_result.reason}"
             
             self.memory.remember(
@@ -574,6 +600,7 @@ class Agent:
             )
             return StepResult(
                 step_idx=step_idx, action=ActionType.TOOL, success=True,
+                is_valid=is_valid,
                 output=output_str,
                 duration_ms=round((time.time() - t0) * 1000, 1),
             )
