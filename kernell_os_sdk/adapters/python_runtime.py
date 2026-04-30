@@ -1,7 +1,7 @@
 import os
 from typing import Dict, Any
 from .secure_adapter import SecureAdapter
-from ..security.cognitive_firewall import CognitiveSecurityLayer
+from ..security.interface import SecurityLayer
 from ..runtime import SubprocessRuntime, ExecutionRequest, ExecutionTimeout, SandboxViolation
 import structlog
 
@@ -19,9 +19,10 @@ class PythonRuntimeAdapter(SecureAdapter):
     """
     capability_name = "python_execution"
 
-    def __init__(self, security_layer: CognitiveSecurityLayer = None):
+    def __init__(self, security_layer: SecurityLayer = None):
         if security_layer is None:
-            security_layer = CognitiveSecurityLayer()
+            from ..security.loader import load_security_layer
+            security_layer, _ = load_security_layer()
         super().__init__(security_layer)
         # Same dual gate as SubprocessRuntime.execute (env + constructor flag).
         allow = os.environ.get("KERNELL_ALLOW_UNSAFE_SUBPROCESS_RUNTIME") == "1"

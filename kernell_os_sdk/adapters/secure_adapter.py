@@ -4,7 +4,7 @@ Kernell OS SDK — Secure Adapter Base
 Enforces the Adapter Security Contract v1.0.
 
 ALL adapters MUST inherit from SecureAdapter, not BaseAdapter directly.
-SecureAdapter wraps the full CognitiveSecurityLayer pipeline around
+SecureAdapter wraps the full SecurityLayer pipeline around
 every execution path, making bypass architecturally impossible.
 """
 from abc import abstractmethod
@@ -13,7 +13,7 @@ from typing import Dict, Any
 import structlog
 
 from .base import BaseAdapter
-from ..security.cognitive_firewall import CognitiveSecurityLayer
+from ..security.interface import SecurityLayer
 
 logger = structlog.get_logger("kernell.adapters.secure")
 
@@ -31,9 +31,9 @@ class SecureAdapter(BaseAdapter):
     is enforced by `process()` and CANNOT be overridden.
     """
 
-    def __init__(self, security_layer: CognitiveSecurityLayer):
+    def __init__(self, security_layer: SecurityLayer):
         assert security_layer is not None, \
-            "SecureAdapter REQUIRES a CognitiveSecurityLayer instance. This is non-negotiable."
+            "SecureAdapter REQUIRES a SecurityLayer instance. This is non-negotiable."
         self.security = security_layer
 
     # ── Mandatory pipeline (final — do NOT override) ─────────────────────────
@@ -66,8 +66,8 @@ class SecureAdapter(BaseAdapter):
             "allow_sensitive_access": False,
         })
 
-        tool_allowed, tool_reason = self.security.tool_governor.approve(
-            tool_name, tool_args, csl_context, self.security.state
+        tool_allowed, tool_reason = self.security.approve_tool(
+            tool_name, tool_args, csl_context
         )
         if not tool_allowed:
             logger.warning("adapter_tool_blocked",
@@ -84,8 +84,8 @@ class SecureAdapter(BaseAdapter):
 
         # 🛡️ PHASE 5: Output Guard (DLP)
         raw_output = result.get("output", "") if isinstance(result, dict) else str(result)
-        out_allowed, safe_output, out_reason = self.security.output_guard.validate(
-            raw_output, csl_context, self.security.state
+        out_allowed, safe_output, out_reason = self.security.validate_output(
+            raw_output, csl_context
         )
         if not out_allowed:
             logger.warning("adapter_output_blocked",

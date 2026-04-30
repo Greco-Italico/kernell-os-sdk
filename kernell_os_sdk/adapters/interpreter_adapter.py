@@ -1,7 +1,7 @@
 import shlex
 from typing import Dict, Any
 from .secure_adapter import SecureAdapter
-from ..security.cognitive_firewall import CognitiveSecurityLayer
+from ..security.interface import SecurityLayer
 import structlog
 
 logger = structlog.get_logger("kernell.adapters.interpreter")
@@ -18,10 +18,11 @@ class OpenInterpreterAdapter(SecureAdapter):
     """
     capability_name = "terminal_execution"
 
-    def __init__(self, sandbox, security_layer: CognitiveSecurityLayer = None):
+    def __init__(self, sandbox, security_layer: SecurityLayer = None):
         # If no security_layer provided, create a default one
         if security_layer is None:
-            security_layer = CognitiveSecurityLayer()
+            from ..security.loader import load_security_layer
+            security_layer, _ = load_security_layer()
         super().__init__(security_layer)
         self.sandbox = sandbox
 
